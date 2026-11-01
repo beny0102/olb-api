@@ -35,10 +35,6 @@ export const initialState: GameState = {
 const cleanCount = { balls: 0, strikes: 0 };
 const emptyBases = { first: null, second: null, third: null } as const;
 
-function nextBatter(state: GameState): TeamSide {
-  return state.half === "top" ? "home" : "away";
-}
-
 /**
  * Folds one event into the projection. Pure: returns a new object and never
  * mutates its input, so a caller can fold any prefix of the log to get the
@@ -123,5 +119,3 @@ export function applyEvent(state: GameState, event: Event): GameState {
 export function foldEvents(events: readonly Event[], from: GameState = initialState): GameState {
   return events.reduce(applyEvent, from);
 }
-
-export { nextBatter };
