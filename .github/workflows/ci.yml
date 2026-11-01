@@ -26,11 +26,12 @@ jobs:
         with:
           node-version: 24
 
-      - name: Build the contract
+      # `file:` dependencies are symlinked, so the contract's runtime
+      # dependencies (ajv) must be installed here. The generated types it
+      # exports are committed; rebuilding it would also need Python tooling.
+      - name: Install contract dependencies
         working-directory: olb-contract
-        run: |
-          npm ci
-          npm run build
+        run: npm ci
 
       - name: Install
         working-directory: olb-api
