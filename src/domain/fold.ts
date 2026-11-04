@@ -4,6 +4,9 @@ export type GameStatus = "scheduled" | "live" | "final" | "suspended" | "forfeit
 export type HalfInning = "top" | "bottom";
 export type TeamSide = "home" | "away";
 
+type Bases = GameState["bases"];
+type BaseKey = keyof Bases;
+
 /**
  * The projection served by GET /games/:id/state and by realtime snapshots.
  * It matches `gameState` in the contract's common schema.
@@ -35,10 +38,52 @@ export const initialState: GameState = {
 const cleanCount = { balls: 0, strikes: 0 };
 const emptyBases = { first: null, second: null, third: null } as const;
 
+function baseKey(base: "1" | "2" | "3"): BaseKey {
+  return base === "1" ? "first" : base === "2" ? "second" : "third";
+}
+
+function otherSide(side: TeamSide): TeamSide {
+  return side === "home" ? "away" : "home";
+}
+
+/**
+ * A walk moves only the runners that are forced. The batter always takes
+ * first; a runner on third scores only when first and second are occupied.
+ */
+function forcedAdvance(bases: Bases, batter: string): { bases: Bases; runScored: boolean } {
+  const next: Bases = { ...bases };
+
+  if (next.first === null) {
+    next.first = batter;
+    return { bases: next, runScored: false };
+  }
+  if (next.second === null) {
+    next.second = next.first;
+    next.first = batter;
+    return { bases: next, runScored: false };
+  }
+  if (next.third === null) {
+    next.third = next.second;
+    next.second = next.first;
+    next.first = batter;
+    return { bases: next, runScored: false };
+  }
+
+  // Bases loaded: the runner on third is forced home.
+  next.third = next.second;
+  next.second = next.first;
+  next.first = batter;
+  return { bases: next, runScored: true };
+}
+
 /**
  * Folds one event into the projection. Pure: returns a new object and never
  * mutates its input, so a caller can fold any prefix of the log to get the
  * state as of that sequence number.
+ *
+ * The contract caps `count` at 3-2, so the walk and the strikeout are decided
+ * here from the fold's own counter before the counter is reset. A fourth ball
+ * and a third strike therefore never leak a value the contract rejects.
  */
 export function applyEvent(state: GameState, event: Event): GameState {
   const base: GameState = { ...state, lastSeq: event.seq };
@@ -58,30 +103,120 @@ export function applyEvent(state: GameState, event: Event): GameState {
       };
 
     case "pitch": {
-      const { call } = event.payload;
+      const { call, batter } = event.payload;
       const count = { ...state.count };
+      const side = state.battingTeam;
 
-      if (call === "B") count.balls = Math.min(count.balls + 1, 3);
-      else if (call === "C" || call === "S" || call === "T" || call === "F") {
-        count.strikes = Math.min(count.strikes + 1, 2);
+      // B and P are balls; a fourth one is a walk, not a stored count of 4.
+      if (call === "B" || call === "P") {
+        count.balls += 1;
+        if (count.balls >= 4) {
+          const advance = forcedAdvance(state.bases, batter);
+          return {
+            ...base,
+            count: { ...cleanCount },
+            bases: advance.bases,
+            score: advance.runScored
+              ? { ...state.score, [side]: state.score[side] + 1 }
+              : state.score,
+          };
+        }
+        return { ...base, count };
       }
 
-      return { ...base, count };
+      // C, S and Q are strikes; a third one is a strikeout.
+      if (call === "C" || call === "S" || call === "Q") {
+        count.strikes += 1;
+        if (count.strikes >= 3) {
+          return {
+            ...base,
+            outs: Math.min(state.outs + 1, 2),
+            count: { ...cleanCount },
+          };
+        }
+        return { ...base, count };
+      }
+
+      // A foul never produces a third strike.
+      if (call === "F") {
+        return { ...base, count: { balls: count.balls, strikes: Math.min(count.strikes + 1, 2) } };
+      }
+
+      // A foul tip with two strikes is a strikeout; otherwise it is a strike.
+      if (call === "T") {
+        if (state.count.strikes >= 2) {
+          return {
+            ...base,
+            outs: Math.min(state.outs + 1, 2),
+            count: { ...cleanCount },
+          };
+        }
+        return { ...base, count: { balls: count.balls, strikes: count.strikes + 1 } };
+      }
+
+      // X announces a ball in play; the following `ball_in_play` resets the
+      // count, so X itself only advances the sequence number.
+      return base;
     }
 
     case "ball_in_play": {
+      const { fielders, runnersAdvanced, runsBattedIn } = event.payload;
       const side = state.battingTeam;
+      const bases: Bases = { ...state.bases };
+      const putouts = (fielders ?? []).filter((fielder) => fielder.role === "putout").length;
+      let score = state.score;
+
+      if (runnersAdvanced && runnersAdvanced.length > 0) {
+        let runs = 0;
+        for (const advance of runnersAdvanced) {
+          if (advance.from !== "B") bases[baseKey(advance.from)] = null;
+          if (advance.to === "H") {
+            runs += 1;
+          } else if (advance.to !== "B") {
+            bases[baseKey(advance.to)] = advance.player;
+          }
+        }
+        if (runs > 0) score = { ...score, [side]: score[side] + runs };
+      } else if (runsBattedIn > 0) {
+        // No baserunning detail: the official runs batted in is the only
+        // number the log actually states, so it is the one used.
+        score = { ...score, [side]: score[side] + runsBattedIn };
+      }
+
+      // The batter is kept in the payload for the scorekeeper; without a
+      // runnersAdvanced entry there is nothing in the log that places him on
+      // a base, so no base is invented for him.
       return {
         ...base,
+        outs: Math.min(state.outs + putouts, 2),
         count: { ...cleanCount },
-        score: { ...state.score, [side]: state.score[side] + event.payload.runsBattedIn },
+        bases,
+        score,
       };
     }
 
-    case "runner":
-      return { ...base, outs: Math.min(state.outs + (event.payload.out ? 1 : 0), 2) };
+    case "runner": {
+      const { player, from, to, out } = event.payload;
+      const bases: Bases = { ...state.bases };
+      const key = baseKey(from);
+      const side = state.battingTeam;
+      let score = state.score;
+      let outs = state.outs;
+
+      bases[key] = null;
+      if (out) {
+        outs = Math.min(outs + 1, 2);
+      } else if (to === "H") {
+        score = { ...score, [side]: score[side] + 1 };
+      } else {
+        bases[baseKey(to)] = player;
+      }
+
+      return { ...base, bases, outs, score };
+    }
 
     case "inning.end": {
+      // The human ends the half. Three outs alone never advance it.
       const half: HalfInning = state.half === "top" ? "bottom" : "top";
       const inning = state.half === "bottom" ? state.inning + 1 : state.inning;
       return {
@@ -91,7 +226,7 @@ export function applyEvent(state: GameState, event: Event): GameState {
         outs: 0,
         count: { ...cleanCount },
         bases: { ...emptyBases },
-        battingTeam: half === "top" ? "away" : "home",
+        battingTeam: otherSide(state.battingTeam),
       };
     }
 
@@ -118,4 +253,78 @@ export function applyEvent(state: GameState, event: Event): GameState {
 
 export function foldEvents(events: readonly Event[], from: GameState = initialState): GameState {
   return events.reduce(applyEvent, from);
+}
+
+export interface TeamBoxScore {
+  runs: number;
+  hits: number;
+  errors: number;
+  linescore: (number | null)[];
+}
+
+export interface GameBoxScore {
+  gameId: string;
+  status: GameStatus;
+  home: TeamBoxScore;
+  away: TeamBoxScore;
+}
+
+function isHit(code: string): boolean {
+  return /^(S|D|T|HR)/i.test(code);
+}
+
+function isError(code: string, fielders: readonly { role: string }[]): boolean {
+  return /^E/i.test(code) || fielders.some((fielder) => fielder.role === "error");
+}
+
+/**
+ * Derives the box score from the same log the projection folds. Runs come
+ * from the projection (which already prefers `game.end.finalScore`), hits and
+ * errors from the play codes and fielding roles, and the linescore from the
+ * `runsScored` each `inning.end` states. An inning that was never ended stays
+ * null, because inventing a zero would hide an unfinished half.
+ */
+export function foldBoxScore(gameId: string, events: readonly Event[]): GameBoxScore {
+  let state = initialState;
+  const hits: Record<TeamSide, number> = { home: 0, away: 0 };
+  const errors: Record<TeamSide, number> = { home: 0, away: 0 };
+  const innings: Record<TeamSide, Array<{ inning: number; runs: number }>> = { home: [], away: [] };
+
+  for (const event of events) {
+    if (event.type === "ball_in_play") {
+      const batting = state.battingTeam;
+      if (isHit(event.payload.code)) hits[batting] += 1;
+      if (isError(event.payload.code, event.payload.fielders ?? [])) {
+        errors[otherSide(batting)] += 1;
+      }
+    } else if (event.type === "inning.end") {
+      const side: TeamSide = event.payload.half === "top" ? "away" : "home";
+      innings[side].push({ inning: event.payload.inning, runs: event.payload.runsScored });
+    }
+    state = applyEvent(state, event);
+  }
+
+  return {
+    gameId,
+    status: state.status,
+    home: {
+      runs: state.score.home,
+      hits: hits.home,
+      errors: errors.home,
+      linescore: linescore(innings.home),
+    },
+    away: {
+      runs: state.score.away,
+      hits: hits.away,
+      errors: errors.away,
+      linescore: linescore(innings.away),
+    },
+  };
+}
+
+function linescore(innings: Array<{ inning: number; runs: number }>): (number | null)[] {
+  const length = Math.max(9, ...innings.map((entry) => entry.inning));
+  const line: (number | null)[] = Array.from({ length }, () => null);
+  for (const entry of innings) line[entry.inning - 1] = entry.runs;
+  return line;
 }
