@@ -21,8 +21,8 @@ const ACTOR = { kind: "service" as const, id: "olb-seed-demo" };
 const POSITIONS = ["8", "4", "9", "3", "5", "6", "7", "2", "1"] as const;
 
 /** Runs per inning. Both sides must add up to the final score. */
-const AWAY_RUNS: readonly number[] = [1, 0, 0, 1, 0, 0, 1, 0, 0];
-const HOME_RUNS: readonly number[] = [0, 2, 0, 0, 2, 0, 0, 1, 0];
+const AWAY_RUNS: readonly number[] = [0, 2, 0, 0, 2, 0, 0, 1, 0];
+const HOME_RUNS: readonly number[] = [1, 0, 0, 1, 0, 0, 1, 0, 0];
 
 interface Roster {
   readonly name: string;
