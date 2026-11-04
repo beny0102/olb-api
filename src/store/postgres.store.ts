@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS events (
   body jsonb NOT NULL,
   PRIMARY KEY (game_id, seq)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS events_event_id_unique ON events ((body->>'id'));
 `;
 
 interface GameRow {
@@ -137,6 +139,14 @@ export class PostgresEventStore implements EventStore {
       [gameId, fromSeq],
     );
     return rows.map((row) => row.body);
+  }
+
+  async findEventById(id: string): Promise<Event | null> {
+    const { rows } = await this.pool.query<{ body: Event }>(
+      `SELECT body FROM events WHERE body->>'id' = $1 LIMIT 1`,
+      [id],
+    );
+    return rows[0]?.body ?? null;
   }
 
   async ping(): Promise<void> {

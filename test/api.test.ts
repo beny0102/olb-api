@@ -225,4 +225,108 @@ describe("olb-api", () => {
       .send({ type: "note", source: "human", actor: { kind: "user", id: "u" }, payload: { text: "hi" } })
       .expect(404);
   });
+
+  it("keeps a client event id and treats a retry as the same event", async () => {
+    const gameId = await createGame();
+    const clientId = "0192f3b1-0000-7000-8000-000000000001";
+    const occurredAt = "2026-04-11T23:41:07.412Z";
+
+    const first = await request(app.getHttpServer())
+      .post(`/games/${gameId}/events`)
+      .send({ ...pitch("S"), id: clientId, occurredAt })
+      .expect(201);
+
+    expect(first.body).toMatchObject({ id: clientId, occurredAt, seq: 1 });
+    expect(first.body.payload.call).toBe("S");
+
+    const retry = await request(app.getHttpServer())
+      .post(`/games/${gameId}/events`)
+      .send({ ...pitch("B"), id: clientId })
+      .expect(201);
+
+    expect(retry.body).toEqual(first.body);
+
+    const events = await request(app.getHttpServer())
+      .get(`/games/${gameId}/events`)
+      .expect(200);
+
+    expect(events.body).toHaveLength(2);
+  });
+
+  it("rejects an invalid client event id", async () => {
+    const gameId = await createGame();
+
+    await request(app.getHttpServer())
+      .post(`/games/${gameId}/events`)
+      .send({ ...pitch("S"), id: "not-a-uuid" })
+      .expect(400);
+  });
+
+  it("applies a revision instead of the original event", async () => {
+    const gameId = await createGame();
+    const originalId = "0192f3b1-0000-7000-8000-000000000002";
+
+    const original = await request(app.getHttpServer())
+      .post(`/games/${gameId}/events`)
+      .send({ ...pitch("S"), id: originalId })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/games/${gameId}/events`)
+      .send({
+        ...pitch("B"),
+        id: "0192f3b1-0000-7000-8000-000000000003",
+        revisionOf: originalId,
+      })
+      .expect(201);
+
+    const state = await request(app.getHttpServer())
+      .get(`/games/${gameId}/state`)
+      .expect(200);
+
+    expect(state.body.count).toEqual({ balls: 1, strikes: 0 });
+    expect(state.body.lastSeq).toBe(original.body.seq + 1);
+  });
+
+  it("voids an event through an amendment", async () => {
+    const gameId = await createGame();
+
+    const original = await request(app.getHttpServer())
+      .post(`/games/${gameId}/events`)
+      .send({ ...pitch("B"), id: "0192f3b1-0000-7000-8000-000000000004" })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/games/${gameId}/events`)
+      .send({
+        id: "0192f3b1-0000-7000-8000-000000000005",
+        type: "amendment",
+        source: "human",
+        actor: { kind: "user", id: "usr_01HX" },
+        payload: { targetSeq: original.body.seq, reason: "other", replacement: null },
+      })
+      .expect(201);
+
+    const state = await request(app.getHttpServer())
+      .get(`/games/${gameId}/state`)
+      .expect(200);
+
+    expect(state.body.count).toEqual({ balls: 0, strikes: 0 });
+    expect(state.body.lastSeq).toBe(original.body.seq + 1);
+  });
 });
+
+function pitch(call: "S" | "B") {
+  return {
+    type: "pitch",
+    source: "human",
+    actor: { kind: "user", id: "usr_01HX" },
+    payload: {
+      pitchNo: 1,
+      batter: "0192f3a2-0001-7000-8000-000000000001",
+      pitcher: "0192f3a2-0001-7000-8000-000000000002",
+      count: { balls: 0, strikes: 0 },
+      call,
+    },
+  };
+}

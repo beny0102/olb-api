@@ -87,9 +87,11 @@ curl -X POST http://localhost:3000/games/$GAME/events \
   }'
 ```
 
-The response is the stored event with `id`, `seq`, `occurredAt`, `recordedAt`
-and `contract` filled in by the server. The client never chooses a sequence
-number, an event id, or a recording time.
+The client may supply `id` (a UUIDv7) and `occurredAt`. A retried POST with
+the same `id` returns the stored event instead of appending a duplicate, even
+when the retry carries a different payload; reusing the id in another game
+answers `409`. `seq`, `recordedAt` and `contract` are always assigned by the
+server, and an invalid id fails validation with `400`.
 
 ## How it works
 
@@ -119,6 +121,53 @@ Three properties are worth stating explicitly:
 
 `GameState` follows `gameState` in the contract's common schema, so the same
 object can be wrapped in a realtime `snapshot` message without translation.
+
+## Revisions and undo
+
+The log is append-only: a correction is a new event, never a rewrite. To
+replace an event, POST the replacement with the same `type` and `payload`
+shape as the original and set `revisionOf` to the id of the event being
+corrected:
+
+```bash
+curl -X POST http://localhost:3000/games/$GAME/events \
+  -H 'content-type: application/json' \
+  -d '{
+    "id": "0192f3b2-0000-7000-8000-000000000001",
+    "revisionOf": "0192f3b2-0000-7000-8000-000000000000",
+    "type": "pitch",
+    "source": "human",
+    "actor": { "kind": "user", "id": "usr_01HX" },
+    "payload": {
+      "pitchNo": 1,
+      "batter": "0192f3a2-0001-7000-8000-000000000001",
+      "pitcher": "0192f3a2-0001-7000-8000-000000000002",
+      "count": { "balls": 0, "strikes": 0 },
+      "call": "S"
+    }
+  }'
+```
+
+The projection applies the revision and skips the replaced event. A chain
+`A <- B <- C` applies only `C`, because both `A` and `B` are superseded.
+
+To void an event without a replacement, append an `amendment` with
+`payload.replacement: null` and `payload.targetSeq` set to the sequence number
+to remove. The target is skipped by the projection, and the amendment itself
+is a no-op in the fold:
+
+```json
+{
+  "type": "amendment",
+  "source": "human",
+  "actor": { "kind": "user", "id": "usr_01HX" },
+  "payload": { "targetSeq": 3, "reason": "other", "replacement": null }
+}
+```
+
+Skipped events still count as consumed: `lastSeq` reflects the highest
+sequence number in the log, so a client resuming from `fromSeq` never replays
+a corrected or voided event.
 
 Two stores implement the same `EventStore` interface: `MemoryEventStore` for
 development and tests, and `PostgresEventStore` for real use. Postgres takes a

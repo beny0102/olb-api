@@ -20,11 +20,14 @@ export interface CreateGameInput {
 }
 
 /**
- * The event id, sequence number, contract tag and recording timestamp are
- * always assigned by the store; a client can only supply the rest.
+ * The sequence number, contract tag and recording timestamp are always
+ * assigned by the store. A client may supply `id` and `occurredAt` so that a
+ * retried POST keeps the same identity; an omitted id is generated.
  */
 export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
-export type EventDraft = DistributiveOmit<Event, "id" | "seq" | "contract" | "recordedAt">;
+export type EventDraft = DistributiveOmit<Event, "id" | "seq" | "contract" | "recordedAt"> & {
+  id?: Event["id"];
+};
 
 export interface EventStore {
   readonly kind: "memory" | "postgres";
@@ -41,6 +44,10 @@ export interface EventStore {
   append(gameId: string, build: (seq: number) => Event): Promise<Event>;
 
   listEvents(gameId: string, fromSeq: number): Promise<Event[]>;
+
+  /** Looks up one event by its client-visible id, across every game. */
+  findEventById(id: string): Promise<Event | null>;
+
   ping(): Promise<void>;
 }
 

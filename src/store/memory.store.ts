@@ -14,6 +14,7 @@ export class MemoryEventStore implements EventStore {
 
   private readonly games = new Map<string, GameRecord>();
   private readonly events = new Map<string, Event[]>();
+  private readonly eventsById = new Map<string, Event>();
   private readonly tails = new Map<string, Promise<unknown>>();
 
   async createGame(input: CreateGameInput): Promise<GameRecord> {
@@ -48,6 +49,10 @@ export class MemoryEventStore implements EventStore {
     return (this.events.get(gameId) ?? []).filter((event) => event.seq >= fromSeq);
   }
 
+  async findEventById(id: string): Promise<Event | null> {
+    return this.eventsById.get(id) ?? null;
+  }
+
   async ping(): Promise<void> {
     return;
   }
@@ -60,6 +65,7 @@ export class MemoryEventStore implements EventStore {
     const seq = game.lastSeq + 1;
     const event = build(seq);
     log.push(event);
+    this.eventsById.set(event.id, event);
     game.lastSeq = seq;
     return event;
   }

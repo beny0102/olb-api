@@ -256,8 +256,36 @@ export function applyEvent(state: GameState, event: Event): GameState {
   }
 }
 
+/**
+ * The events a projection actually applies. A revision supersedes the event
+ * named by `revisionOf`, and a void amendment (`replacement: null`) removes
+ * the event at `targetSeq`. Both replaced events stay in the log: the
+ * correction is append-only, only the fold skips the originals.
+ *
+ * A chain A <- B <- C leaves only C, because both A and B are superseded.
+ */
+export function appliedEvents(events: readonly Event[]): Event[] {
+  const superseded = new Set<string>();
+  const voidTargets = new Set<number>();
+
+  for (const event of events) {
+    if (typeof event.revisionOf === "string") superseded.add(event.revisionOf);
+    if (event.type === "amendment" && event.payload.replacement === null) {
+      voidTargets.add(event.payload.targetSeq);
+    }
+  }
+
+  return events.filter(
+    (event) => !superseded.has(event.id) && !voidTargets.has(event.seq),
+  );
+}
+
 export function foldEvents(events: readonly Event[], from: GameState = initialState): GameState {
-  return events.reduce(applyEvent, from);
+  const state = appliedEvents(events).reduce(applyEvent, from);
+  // A skipped event was still consumed by the log, so the projection's cursor
+  // must include it; otherwise a resume from `lastSeq` would replay it.
+  const lastSeq = events.reduce((max, event) => Math.max(max, event.seq), from.lastSeq);
+  return { ...state, lastSeq };
 }
 
 export interface TeamBoxScore {
@@ -295,7 +323,7 @@ export function foldBoxScore(gameId: string, events: readonly Event[]): GameBoxS
   const errors: Record<TeamSide, number> = { home: 0, away: 0 };
   const innings: Record<TeamSide, Array<{ inning: number; runs: number }>> = { home: [], away: [] };
 
-  for (const event of events) {
+  for (const event of appliedEvents(events)) {
     if (event.type === "ball_in_play") {
       const batting = state.battingTeam;
       if (isHit(event.payload.code)) hits[batting] += 1;
@@ -308,6 +336,12 @@ export function foldBoxScore(gameId: string, events: readonly Event[]): GameBoxS
     }
     state = applyEvent(state, event);
   }
+
+  // Same cursor rule as foldEvents: a skipped event still counts as consumed.
+  state = {
+    ...state,
+    lastSeq: events.reduce((max, event) => Math.max(max, event.seq), state.lastSeq),
+  };
 
   return {
     gameId,

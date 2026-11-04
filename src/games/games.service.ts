@@ -26,6 +26,15 @@ function assertObject(body: unknown): Record<string, unknown> {
   return body as Record<string, unknown>;
 }
 
+/** Postgres reports a unique-index violation with SQLSTATE 23505. */
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "23505"
+  );
+}
+
 function teamName(body: Record<string, unknown>, key: string): string {
   const value = body[key];
   if (typeof value !== "string" || value.trim().length === 0 || value.length > MAX_NAME) {
@@ -209,7 +218,28 @@ export class GamesService {
 
   async appendEvent(id: string, body: unknown): Promise<Event> {
     const input = assertObject(body);
-    return this.store.append(id, (seq) => this.buildEvent(id, seq, input));
+
+    // A client-generated id makes a retried POST idempotent: the stored event
+    // wins, even if the retry carries a different payload. Reusing an id in a
+    // different game is a conflict, not an alias.
+    if (typeof input.id === "string") {
+      const existing = await this.store.findEventById(input.id);
+      if (existing) {
+        if (existing.gameId === id) return existing;
+        throw new ConflictException("event id belongs to another game");
+      }
+    }
+
+    try {
+      return await this.store.append(id, (seq) => this.buildEvent(id, seq, input));
+    } catch (error) {
+      // Two concurrent retries can both miss the first lookup. The unique
+      // index lets only one append; the loser adopts the winner's event.
+      if (!isUniqueViolation(error) || typeof input.id !== "string") throw error;
+      const stored = await this.store.findEventById(input.id);
+      if (stored && stored.gameId === id) return stored;
+      throw error;
+    }
   }
 
   /**
@@ -233,14 +263,15 @@ export class GamesService {
   /**
    * Stamps the fields the server owns. Everything else is passed through
    * untouched, including fields a newer producer added: the contract requires
-   * unknown fields to survive, not to be silently dropped.
+   * unknown fields to survive, not to be silently dropped. A client-supplied
+   * `id` and `occurredAt` are kept so an offline retry keeps its identity.
    */
   private buildEvent(gameId: string, seq: number, body: Record<string, unknown>): Event {
     const now = new Date().toISOString();
     const candidate: Record<string, unknown> = {
       ...body,
       contract: "olb.event/1",
-      id: uuidv7(),
+      id: typeof body.id === "string" ? body.id : uuidv7(),
       gameId,
       seq,
       occurredAt: typeof body.occurredAt === "string" ? body.occurredAt : now,
