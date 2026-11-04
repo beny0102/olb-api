@@ -26,6 +26,7 @@ async function createGame(): Promise<string> {
     .post("/games")
     .send({ homeTeam: "Marlins", awayTeam: "Tiburones" })
     .expect(201);
+  await request(app.getHttpServer()).post(`/games/${response.body.id}/start`).send({}).expect(201);
   return response.body.id;
 }
 
@@ -35,20 +36,67 @@ describe("olb-api", () => {
     expect(response.body).toMatchObject({ status: "ok", contract: "olb.event/1", storage: "memory" });
   });
 
-  it("creates a live game whose first event is game.start", async () => {
+  it("creates a scheduled game and appends no event", async () => {
     const response = await request(app.getHttpServer())
       .post("/games")
-      .send({ homeTeam: "Marlins", awayTeam: "Tiburones" })
+      .send({
+        homeTeam: "Marlins",
+        awayTeam: "Tiburones",
+        scheduledStart: "2026-04-11T23:40:00.000Z",
+        venue: "Estadio Centenario",
+      })
       .expect(201);
 
-    expect(response.body).toMatchObject({ homeTeam: "Marlins", awayTeam: "Tiburones", lastSeq: 0 });
+    expect(response.body).toMatchObject({
+      homeTeam: "Marlins",
+      awayTeam: "Tiburones",
+      scheduledStart: "2026-04-11T23:40:00.000Z",
+      venue: "Estadio Centenario",
+      lastSeq: 0,
+    });
 
     const events = await request(app.getHttpServer())
       .get(`/games/${response.body.id}/events`)
       .expect(200);
 
+    expect(events.body).toHaveLength(0);
+
+    const state = await request(app.getHttpServer())
+      .get(`/games/${response.body.id}/state`)
+      .expect(200);
+
+    expect(state.body.status).toBe("scheduled");
+  });
+
+  it("starts a scheduled game with game.start at sequence zero", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/games")
+      .send({ homeTeam: "Marlins", awayTeam: "Tiburones", venue: "Estadio Centenario" })
+      .expect(201);
+
+    const started = await request(app.getHttpServer())
+      .post(`/games/${created.body.id}/start`)
+      .send({ venue: "Estadio Centenario", fieldCondition: "dry" })
+      .expect(201);
+
+    expect(started.body).toMatchObject({ homeTeam: "Marlins", lastSeq: 0 });
+    expect(started.body.state).toMatchObject({
+      status: "live",
+      inning: 1,
+      half: "top",
+      battingTeam: "away",
+    });
+
+    const events = await request(app.getHttpServer())
+      .get(`/games/${created.body.id}/events`)
+      .expect(200);
+
     expect(events.body).toHaveLength(1);
     expect(events.body[0]).toMatchObject({ seq: 0, type: "game.start", contract: "olb.event/1" });
+    expect(events.body[0].payload).toMatchObject({
+      venue: "Estadio Centenario",
+      fieldCondition: "dry",
+    });
   });
 
   it("rejects a game without both teams", async () => {

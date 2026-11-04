@@ -1,12 +1,22 @@
-import { BadRequestException, Inject, Injectable } from "@nestjs/common";
+import { BadRequestException, ConflictException, Inject, Injectable } from "@nestjs/common";
 import { parseEvent } from "@olb/contract";
 import type { Event } from "@olb/contract/types";
-import { foldEvents, type GameState } from "../domain/fold.js";
+import {
+  foldBoxScore,
+  foldEvents,
+  type GameBoxScore,
+  type GameState,
+} from "../domain/fold.js";
+import { computeStandings, type Standings } from "../domain/standings.js";
 import { uuidv7 } from "../domain/uuid7.js";
 import { GameNotFoundError } from "../store/errors.js";
 import { EVENT_STORE, type EventStore, type GameRecord } from "../store/store.js";
 
 const MAX_NAME = 120;
+const MAX_VENUE = 200;
+const ISO_TIMESTAMP =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
+const END_REASONS = ["completed", "forfeit", "suspended", "rain", "darkness", "other"] as const;
 
 function assertObject(body: unknown): Record<string, unknown> {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -23,41 +33,147 @@ function teamName(body: Record<string, unknown>, key: string): string {
   return value.trim();
 }
 
+function optionalTimestamp(body: Record<string, unknown>, key: string): string | null {
+  const value = body[key];
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || !ISO_TIMESTAMP.test(value) || Number.isNaN(Date.parse(value))) {
+    throw new BadRequestException(`${key} must be an ISO-8601 timestamp`);
+  }
+  return value;
+}
+
+function optionalVenue(body: Record<string, unknown>, key = "venue"): string | null {
+  const value = body[key];
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.length > MAX_VENUE) {
+    throw new BadRequestException(`${key} must be a string of at most ${MAX_VENUE} characters`);
+  }
+  return value;
+}
+
+function finalScore(value: unknown): { home: number; away: number } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new BadRequestException("finalScore must be an object with home and away");
+  }
+  const score = value as Record<string, unknown>;
+  const home = score.home;
+  const away = score.away;
+  if (
+    !Number.isInteger(home) ||
+    (home as number) < 0 ||
+    !Number.isInteger(away) ||
+    (away as number) < 0
+  ) {
+    throw new BadRequestException("finalScore.home and finalScore.away must be non-negative integers");
+  }
+  return { home: home as number, away: away as number };
+}
+
 @Injectable()
 export class GamesService {
   constructor(@Inject(EVENT_STORE) private readonly store: EventStore) {}
 
-  listGames(): Promise<GameRecord[]> {
-    return this.store.listGames();
+  async listGames(): Promise<GameRecord[]> {
+    return (await this.store.listGames()).map((game) => this.view(game));
   }
 
   async createGame(body: unknown): Promise<GameRecord> {
     const input = assertObject(body);
+
+    // A new game is scheduled, not live: an empty log already folds to
+    // `initialState`, so there is no event to write until the game starts.
     const game = await this.store.createGame({
       id: uuidv7(),
       homeTeam: teamName(input, "homeTeam"),
       awayTeam: teamName(input, "awayTeam"),
+      scheduledStart: optionalTimestamp(input, "scheduledStart"),
+      venue: optionalVenue(input, "venue"),
       createdAt: new Date().toISOString(),
     });
 
-    // A game is created live: the first event is always game.start, so the
-    // log has no gap at sequence zero and the projection is never scheduled.
-    await this.store.append(game.id, (seq) =>
-      this.buildEvent(game.id, seq, {
+    return this.view(game);
+  }
+
+  async startGame(id: string, body: unknown): Promise<GameRecord & { state: GameState }> {
+    const input = assertObject(body ?? {});
+    const payload: Record<string, unknown> = {
+      startedAt: optionalTimestamp(input, "startedAt") ?? new Date().toISOString(),
+    };
+    const venue = optionalVenue(input);
+    if (venue !== null) payload.venue = venue;
+    if (input.fieldCondition !== undefined) payload.fieldCondition = input.fieldCondition;
+    if (input.umpires !== undefined) payload.umpires = input.umpires;
+
+    await this.store.append(id, (seq) => {
+      // The sequence number is assigned inside the store's critical section,
+      // so this check cannot race a second `start` into the log.
+      if (seq > 0) throw new ConflictException("game already has events");
+      return this.buildEvent(id, seq, {
         type: "game.start",
         source: "human",
         actor: { kind: "system", id: "olb-api" },
-        payload: { startedAt: game.createdAt },
+        payload,
+      });
+    });
+
+    return this.withState(id);
+  }
+
+  async finishGame(id: string, body: unknown): Promise<GameRecord & { state: GameState }> {
+    const events = await this.listEvents(id, 0);
+    const state = foldEvents(events);
+    if (state.status === "final" || state.status === "forfeit") {
+      throw new ConflictException(`game is already ${state.status}`);
+    }
+
+    const input = assertObject(body ?? {});
+    const reason = input.reason;
+    if (typeof reason !== "string" || !END_REASONS.includes(reason as (typeof END_REASONS)[number])) {
+      throw new BadRequestException(`reason must be one of: ${END_REASONS.join(", ")}`);
+    }
+
+    // The official score is the folded one unless the scorekeeper states it;
+    // a mismatch means the fold and the scorekeeper disagree, so nothing is
+    // appended and the conflict is surfaced instead of silently overwriting.
+    const folded = state.score;
+    const official = input.finalScore === undefined ? folded : finalScore(input.finalScore);
+    if (official.home !== folded.home || official.away !== folded.away) {
+      throw new ConflictException("finalScore does not match the folded score");
+    }
+
+    await this.store.append(id, (seq) =>
+      this.buildEvent(id, seq, {
+        type: "game.end",
+        source: "human",
+        actor: { kind: "system", id: "olb-api" },
+        payload: { reason, finalScore: official },
       }),
     );
 
-    return { ...game, lastSeq: 0 };
+    return this.withState(id);
+  }
+
+  async getBoxScore(id: string): Promise<GameBoxScore> {
+    const events = await this.listEvents(id, 0);
+    return foldBoxScore(id, events);
+  }
+
+  async getStandings(): Promise<Standings> {
+    const games = await this.store.listGames();
+    const rows = await Promise.all(
+      games.map(async (game) => ({
+        homeTeam: game.homeTeam,
+        awayTeam: game.awayTeam,
+        state: foldEvents(await this.store.listEvents(game.id, 0)),
+      })),
+    );
+    return computeStandings(rows);
   }
 
   async getGame(id: string): Promise<GameRecord> {
     const game = await this.store.getGame(id);
     if (!game) throw new GameNotFoundError(id);
-    return game;
+    return this.view(game);
   }
 
   async getState(id: string): Promise<GameState> {
@@ -74,6 +190,24 @@ export class GamesService {
   async appendEvent(id: string, body: unknown): Promise<Event> {
     const input = assertObject(body);
     return this.store.append(id, (seq) => this.buildEvent(id, seq, input));
+  }
+
+  /**
+   * The record plus the projection after the write, which is what the
+   * lifecycle endpoints return to a scorekeeper.
+   */
+  private async withState(id: string): Promise<GameRecord & { state: GameState }> {
+    const game = await this.getGame(id);
+    const events = await this.store.listEvents(id, 0);
+    return { ...game, state: foldEvents(events) };
+  }
+
+  /**
+   * The fold of an empty log reports `lastSeq: 0`, so the record is presented
+   * the same way instead of leaking the store's internal -1 sentinel.
+   */
+  private view(game: GameRecord): GameRecord {
+    return { ...game, lastSeq: Math.max(game.lastSeq, 0) };
   }
 
   /**

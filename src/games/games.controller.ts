@@ -22,6 +22,21 @@ export class GamesController {
     return this.games.listGames();
   }
 
+  @Post(":id/start")
+  start(@Param("id") id: string, @Body() body: unknown) {
+    return this.games.startGame(id, body);
+  }
+
+  @Post(":id/finish")
+  finish(@Param("id") id: string, @Body() body: unknown) {
+    return this.games.finishGame(id, body);
+  }
+
+  @Get(":id/boxscore")
+  boxscore(@Param("id") id: string) {
+    return this.games.getBoxScore(id);
+  }
+
   @Get(":id/state")
   state(@Param("id") id: string) {
     return this.games.getState(id);

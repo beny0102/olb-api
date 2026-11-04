@@ -4,6 +4,8 @@ export interface GameRecord {
   id: string;
   homeTeam: string;
   awayTeam: string;
+  scheduledStart: string | null;
+  venue: string | null;
   createdAt: string;
   lastSeq: number;
 }
@@ -12,6 +14,8 @@ export interface CreateGameInput {
   id: string;
   homeTeam: string;
   awayTeam: string;
+  scheduledStart: string | null;
+  venue: string | null;
   createdAt: string;
 }
 

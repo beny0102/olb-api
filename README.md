@@ -3,9 +3,9 @@
 League API for **Open League Baseball**. It owns the event log for every game
 and serves the game state derived from it.
 
-**Status: pre-alpha.** A game can be created, events can be appended, and the
-projection is served over HTTP. There is no authentication and no realtime
-transport yet.
+**Status: pre-alpha.** A game can be scheduled, started, scored through the
+API, finished, and read back as a box score and standings derived from its
+event log. There is no authentication and no realtime transport yet.
 
 ## Quick start
 
@@ -38,19 +38,34 @@ docker run --rm -p 5432:5432 \
 DATABASE_URL=postgres://postgres:olb@localhost:5432/olb npm start
 ```
 
-The schema is created on startup (`games` and `events` tables).
+The schema is created on startup (`games` and `events` tables). The `games`
+row keeps the optional `scheduled_start` and `venue` columns next to the teams.
+If you reuse a volume created by an earlier build, recreate it
+(`docker compose down -v`, or remove the container): the DDL uses
+`CREATE TABLE IF NOT EXISTS` and does not add columns to an existing table.
 
 ## Endpoints
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/health` | Liveness, contract version, active storage |
-| POST | `/games` | Create a game and append `game.start` at seq 0 |
+| POST | `/games` | Schedule a game (`scheduled`, no event appended) |
 | GET | `/games` | List recent games |
+| POST | `/games/:id/start` | Append `game.start` and make the game live |
+| POST | `/games/:id/finish` | Append `game.end` with the official score |
 | GET | `/games/:id` | Game record and last sequence number |
 | GET | `/games/:id/state` | Projection folded from the whole log |
+| GET | `/games/:id/boxscore` | Runs, hits, errors and linescore derived from the log |
 | GET | `/games/:id/events?fromSeq=N` | Event log from a sequence number |
 | POST | `/games/:id/events` | Append one event |
+| GET | `/standings` | W/L, runs for and against, from finished games |
+
+Creating a game does not write to the log. An empty log already folds to
+`scheduled`, so `game.start` is appended only when the scorekeeper calls
+`/start`; a second start, or a start on a game that already has events,
+answers `409`. Finishing uses the folded score unless `finalScore` is given;
+a provided score that disagrees with the fold is also a `409` and nothing is
+appended.
 
 Appending a pitch:
 
@@ -92,9 +107,9 @@ POST /games/:id/events
 
 Three properties are worth stating explicitly:
 
-- **The log is the source of truth.** `GET /state` is recomputed from events,
-  never stored, so a corrected or amended event changes history the same way
-  for every consumer (whitepaper P4).
+- **The log is the source of truth.** `GET /state`, `/boxscore` and
+  `/standings` are recomputed from events, never stored, so a corrected or
+  amended event changes history the same way for every consumer (whitepaper P4).
 - **Validation happens once, at the boundary.** Events are parsed with the
   published contract before they are stored, so an invalid `call` code or a
   missing actor never reaches the log.
@@ -109,6 +124,19 @@ development and tests, and `PostgresEventStore` for real use. Postgres takes a
 row lock on the game (`SELECT ... FOR UPDATE`) before computing the next
 sequence number, which keeps two API replicas from writing the same `seq`.
 
+## Box score and standings
+
+`GET /games/:id/boxscore` derives every number from the log. Runs come from the
+plays that reach home (or the official `finalScore`), hits from play codes that
+start with `S`, `D`, `T` or `HR`, errors from E-codes and `error` fielding
+roles, and the linescore from each `inning.end.runsScored`, padded to nine
+innings with `null`. Player lines are absent because there is no player
+registry yet.
+
+`GET /standings` folds every game and counts only `final` games plus `forfeit`
+games (a forfeit is terminal too). Teams are grouped by their exact label, and
+the table is ordered by winning percentage and then run differential.
+
 ## Not implemented yet
 
 - Realtime gateway (WebSocket, snapshot + delta, resume from `fromSeq`)
@@ -121,7 +149,7 @@ sequence number, which keeps two API replicas from writing the same `seq`.
 
 ```bash
 npm run typecheck
-npm test          # 15 tests: fold rules and HTTP behaviour
+npm test          # fold rules, lifecycle and HTTP box score/standings
 ```
 
 ## License

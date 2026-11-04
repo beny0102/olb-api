@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS games (
   id uuid PRIMARY KEY,
   home_team text NOT NULL,
   away_team text NOT NULL,
+  scheduled_start timestamptz,
+  venue text,
   created_at timestamptz NOT NULL,
   seq integer NOT NULL DEFAULT -1
 );
@@ -24,6 +26,8 @@ interface GameRow {
   id: string;
   home_team: string;
   away_team: string;
+  scheduled_start: Date | null;
+  venue: string | null;
   created_at: Date;
   seq: number;
 }
@@ -33,6 +37,8 @@ function toRecord(row: GameRow): GameRecord {
     id: row.id,
     homeTeam: row.home_team,
     awayTeam: row.away_team,
+    scheduledStart: row.scheduled_start ? row.scheduled_start.toISOString() : null,
+    venue: row.venue,
     createdAt: row.created_at.toISOString(),
     lastSeq: row.seq,
   };
@@ -62,17 +68,25 @@ export class PostgresEventStore implements EventStore {
 
   async createGame(input: CreateGameInput): Promise<GameRecord> {
     const { rows } = await this.pool.query<GameRow>(
-      `INSERT INTO games (id, home_team, away_team, created_at)
-       VALUES ($1, $2, $3, $4)
-       RETURNING id, home_team, away_team, created_at, seq`,
-      [input.id, input.homeTeam, input.awayTeam, input.createdAt],
+      `INSERT INTO games (id, home_team, away_team, scheduled_start, venue, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, home_team, away_team, scheduled_start, venue, created_at, seq`,
+      [
+        input.id,
+        input.homeTeam,
+        input.awayTeam,
+        input.scheduledStart,
+        input.venue,
+        input.createdAt,
+      ],
     );
     return toRecord(rows[0]!);
   }
 
   async getGame(id: string): Promise<GameRecord | null> {
     const { rows } = await this.pool.query<GameRow>(
-      `SELECT id, home_team, away_team, created_at, seq FROM games WHERE id = $1`,
+      `SELECT id, home_team, away_team, scheduled_start, venue, created_at, seq
+         FROM games WHERE id = $1`,
       [id],
     );
     const row = rows[0];
@@ -81,7 +95,7 @@ export class PostgresEventStore implements EventStore {
 
   async listGames(): Promise<GameRecord[]> {
     const { rows } = await this.pool.query<GameRow>(
-      `SELECT id, home_team, away_team, created_at, seq
+      `SELECT id, home_team, away_team, scheduled_start, venue, created_at, seq
          FROM games ORDER BY created_at DESC LIMIT 100`,
     );
     return rows.map(toRecord);
