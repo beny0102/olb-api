@@ -167,9 +167,14 @@ export function applyEvent(state: GameState, event: Event): GameState {
       let score = state.score;
 
       if (runnersAdvanced && runnersAdvanced.length > 0) {
-        let runs = 0;
-        for (const advance of runnersAdvanced) {
+        // Collect first, then move in two phases: a later clear must not wipe a
+        // runner an earlier entry already placed on that base.
+        const moves = runnersAdvanced;
+        for (const advance of moves) {
           if (advance.from !== "B") bases[baseKey(advance.from)] = null;
+        }
+        let runs = 0;
+        for (const advance of moves) {
           if (advance.to === "H") {
             runs += 1;
           } else if (advance.to !== "B") {

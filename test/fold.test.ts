@@ -231,6 +231,80 @@ describe("batted ball and baserunning rules", () => {
   });
 });
 
+describe("ball in play moves runners atomically", () => {
+  it("advances three runners batter-first without erasing anyone", () => {
+    const runnerA = player(61);
+    const runnerB = player(62);
+    const runnerC = player(63);
+    const state = foldEvents([
+      start(),
+      event(1, "ball_in_play", {
+        batter: runnerA,
+        code: "S7",
+        runsBattedIn: 0,
+        runnersAdvanced: [{ player: runnerA, from: "B", to: "1" }],
+      }),
+      event(2, "ball_in_play", {
+        batter: runnerB,
+        code: "S7",
+        runsBattedIn: 0,
+        runnersAdvanced: [
+          { player: runnerB, from: "B", to: "1" },
+          { player: runnerA, from: "1", to: "2" },
+        ],
+      }),
+      event(3, "ball_in_play", {
+        batter: runnerC,
+        code: "S7",
+        runsBattedIn: 0,
+        runnersAdvanced: [
+          { player: runnerC, from: "B", to: "1" },
+          { player: runnerB, from: "1", to: "2" },
+          { player: runnerA, from: "2", to: "3" },
+        ],
+      }),
+    ]);
+
+    expect(state.bases).toEqual({ first: runnerC, second: runnerB, third: runnerA });
+    expect(state.score).toEqual({ home: 0, away: 0 });
+  });
+
+  it("scores a runner while the batter takes first", () => {
+    const runnerA = player(64);
+    const runnerB = player(65);
+    const state = foldEvents([
+      start(),
+      runner(1, { player: runnerA, from: "1", to: "2", kind: "steal", out: false }),
+      event(2, "ball_in_play", {
+        batter: runnerB,
+        code: "S7",
+        runsBattedIn: 1,
+        runnersAdvanced: [
+          { player: runnerB, from: "B", to: "1" },
+          { player: runnerA, from: "2", to: "H" },
+        ],
+      }),
+    ]);
+
+    expect(state.bases).toEqual({ first: runnerB, second: null, third: null });
+    expect(state.score).toEqual({ home: 0, away: 1 });
+  });
+
+  it("leaves the batter on first for a single", () => {
+    const state = foldEvents([
+      start(),
+      event(1, "ball_in_play", {
+        batter,
+        code: "S8",
+        runsBattedIn: 0,
+        runnersAdvanced: [{ player: batter, from: "B", to: "1" }],
+      }),
+    ]);
+
+    expect(state.bases).toEqual({ first: batter, second: null, third: null });
+  });
+});
+
 describe("inning boundaries", () => {
   it("flips the half and clears the bases on inning.end", () => {
     const state = foldEvents([
