@@ -1,7 +1,16 @@
 import type { Event } from "@olb/contract/types";
 import pg from "pg";
+import { uuidv7 } from "../domain/uuid7.js";
 import { GameNotFoundError } from "./errors.js";
-import type { CreateGameInput, EventStore, GameRecord } from "./store.js";
+import type {
+  CreateGameInput,
+  CreateProposalInput,
+  EventStore,
+  GameRecord,
+  ProposalPayload,
+  ProposalRecord,
+  ProposalStatus,
+} from "./store.js";
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS games (
@@ -22,6 +31,17 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS events_event_id_unique ON events ((body->>'id'));
+
+CREATE TABLE IF NOT EXISTS proposals (
+  id uuid PRIMARY KEY,
+  game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL,
+  author text NOT NULL,
+  status text NOT NULL,
+  payload jsonb NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS proposals_game_status ON proposals (game_id, status);
 `;
 
 interface GameRow {
@@ -43,6 +63,26 @@ function toRecord(row: GameRow): GameRecord {
     venue: row.venue,
     createdAt: row.created_at.toISOString(),
     lastSeq: row.seq,
+  };
+}
+
+interface ProposalRow {
+  id: string;
+  game_id: string;
+  created_at: Date;
+  author: string;
+  status: string;
+  payload: ProposalPayload;
+}
+
+function toProposal(row: ProposalRow): ProposalRecord {
+  return {
+    id: row.id,
+    gameId: row.game_id,
+    createdAt: row.created_at.toISOString(),
+    author: row.author,
+    status: row.status as ProposalStatus,
+    payload: row.payload,
   };
 }
 
@@ -147,6 +187,63 @@ export class PostgresEventStore implements EventStore {
       [id],
     );
     return rows[0]?.body ?? null;
+  }
+
+  async createProposal(input: CreateProposalInput): Promise<ProposalRecord> {
+    const record: ProposalRecord = {
+      id: uuidv7(),
+      gameId: input.gameId,
+      createdAt: new Date().toISOString(),
+      author: input.author,
+      status: "open",
+      payload: input.payload,
+    };
+    const { rows } = await this.pool.query<ProposalRow>(
+      `INSERT INTO proposals (id, game_id, created_at, author, status, payload)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, game_id, created_at, author, status, payload`,
+      [
+        record.id,
+        record.gameId,
+        record.createdAt,
+        record.author,
+        record.status,
+        record.payload,
+      ],
+    );
+    return toProposal(rows[0]!);
+  }
+
+  async listProposals(gameId: string, status?: ProposalStatus): Promise<ProposalRecord[]> {
+    const params: unknown[] = [gameId];
+    let query = `SELECT id, game_id, created_at, author, status, payload
+                   FROM proposals WHERE game_id = $1`;
+    if (status !== undefined) {
+      params.push(status);
+      query += ` AND status = $2`;
+    }
+    query += ` ORDER BY created_at ASC, id ASC`;
+
+    const { rows } = await this.pool.query<ProposalRow>(query, params);
+    return rows.map(toProposal);
+  }
+
+  async getProposal(id: string): Promise<ProposalRecord | null> {
+    const { rows } = await this.pool.query<ProposalRow>(
+      `SELECT id, game_id, created_at, author, status, payload
+         FROM proposals WHERE id = $1 LIMIT 1`,
+      [id],
+    );
+    return rows[0] ? toProposal(rows[0]) : null;
+  }
+
+  async resolveProposal(id: string, status: ProposalStatus): Promise<ProposalRecord | null> {
+    const { rows } = await this.pool.query<ProposalRow>(
+      `UPDATE proposals SET status = $2 WHERE id = $1
+       RETURNING id, game_id, created_at, author, status, payload`,
+      [id, status],
+    );
+    return rows[0] ? toProposal(rows[0]) : null;
   }
 
   async ping(): Promise<void> {
