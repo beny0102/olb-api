@@ -150,7 +150,7 @@ class Seeder {
         payload: {
           batter,
           code: "HR/F",
-          description: "home run to left field",
+          description: "jonrón al jardín izquierdo",
           runsBattedIn: 1,
         },
       });
@@ -165,7 +165,7 @@ class Seeder {
         payload: {
           batter,
           code: "63",
-          description: "ground out, shortstop to first base",
+          description: "rodado al campocorto, out en primera",
           fielders: [
             { player: playerAt(fielding, "6"), position: "6", role: "assist" },
             { player: playerAt(fielding, "3"), position: "3", role: "putout" },
@@ -183,7 +183,7 @@ class Seeder {
       payload: {
         batter,
         code: "8",
-        description: "fly out to center field",
+        description: "elevado al jardín central",
         fielders: [{ player: playerAt(fielding, "8"), position: "8", role: "putout" }],
         runsBattedIn: 0,
       },
