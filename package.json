@@ -13,7 +13,8 @@
     "start": "node dist/main.js",
     "dev": "npm run build && node --watch dist/main.js",
     "test": "vitest run",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "seed:demo": "node dist/scripts/seed-demo.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
