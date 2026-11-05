@@ -166,6 +166,7 @@ export interface LeagueStore {
   getTeamSeason(id: string): Promise<TeamSeasonRecord | null>;
   listRoster(teamSeasonId: string): Promise<RosterEntryRecord[]>;
   listGames(seasonId: string, competitionId?: string): Promise<LeagueGameRecord[]>;
+  getGame(id: string): Promise<LeagueGameRecord | null>;
   getGameSummary(gameId: string): Promise<GameSummaryRecord | null>;
 
   ping(): Promise<void>;

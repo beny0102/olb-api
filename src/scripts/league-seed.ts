@@ -18,6 +18,7 @@ export const SEED_COMPETITION_IDS = [id(10), id(11)] as const;
 export const SEED_TEAM_SEASON_IDS = [id(30), id(31), id(32), id(33)] as const;
 
 const SEED_CREATED_AT = "2026-01-01T00:00:00.000Z";
+const SEED_SUMMARY_AT = "2026-03-30T00:00:00.000Z";
 const SEASON_START = "2026-03-01";
 
 const POSITIONS = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH", "P"] as const;
@@ -97,6 +98,7 @@ interface GameSeed {
   away: number;
   competitionIndex: 0 | 1;
   scheduledStart: string;
+  summary?: { homeScore: number; awayScore: number };
 }
 
 const GAMES: GameSeed[] = [
@@ -105,6 +107,7 @@ const GAMES: GameSeed[] = [
     away: 1,
     competitionIndex: 0,
     scheduledStart: "2026-03-07T23:00:00.000Z",
+    summary: { homeScore: 5, awayScore: 3 },
   },
   {
     home: 1,
@@ -117,6 +120,7 @@ const GAMES: GameSeed[] = [
     away: 3,
     competitionIndex: 1,
     scheduledStart: "2026-03-21T23:00:00.000Z",
+    summary: { homeScore: 2, awayScore: 1 },
   },
   {
     home: 3,
@@ -245,9 +249,10 @@ export async function seedLeague(store: LeagueStore): Promise<void> {
   for (const [gameIndex, game] of GAMES.entries()) {
     const home = TEAMS[game.home]!;
     const away = TEAMS[game.away]!;
+    const gameId = id(200 + gameIndex);
 
     await store.upsertGame({
-      id: id(200 + gameIndex),
+      id: gameId,
       seasonId: SEED_SEASON_ID,
       competitionId: SEED_COMPETITION_IDS[game.competitionIndex]!,
       homeTeamSeasonId: SEED_TEAM_SEASON_IDS[game.home]!,
@@ -256,11 +261,23 @@ export async function seedLeague(store: LeagueStore): Promise<void> {
       awayTeam: away.name,
       scheduledStart: game.scheduledStart,
       venue: home.venue,
-      coverage: "full",
-      dataSource: "official",
+      coverage: game.summary ? "summary" : "full",
+      dataSource: game.summary ? "import" : "official",
       rulesProfile: null,
       createdAt: SEED_CREATED_AT,
       lastSeq: -1,
     });
+
+    if (game.summary) {
+      await store.upsertGameSummary({
+        gameId,
+        homeScore: game.summary.homeScore,
+        awayScore: game.summary.awayScore,
+        linescore: null,
+        teamBox: null,
+        source: "seed",
+        updatedAt: SEED_SUMMARY_AT,
+      });
+    }
   }
 }

@@ -48,4 +48,9 @@ export class LeagueController {
   standings(@Param("id") id: string, @Query("competitionId") competitionId?: string) {
     return this.league.getStandings(id, optional(competitionId));
   }
+
+  @Get("league-games/:id")
+  leagueGame(@Param("id") id: string) {
+    return this.league.getGame(id);
+  }
 }

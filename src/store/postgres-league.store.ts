@@ -610,6 +610,11 @@ export class PostgresLeagueStore implements LeagueStore {
     return rows[0] ? toGameSummary(rows[0]) : null;
   }
 
+  async getGame(id: string): Promise<LeagueGameRecord | null> {
+    const { rows } = await this.pool.query<GameRow>(`${GAME_SELECT} WHERE g.id = $1`, [id]);
+    return rows[0] ? toGame(rows[0]) : null;
+  }
+
   async ping(): Promise<void> {
     await this.pool.query("SELECT 1");
   }

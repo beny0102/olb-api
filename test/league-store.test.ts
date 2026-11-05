@@ -102,7 +102,7 @@ describe("league store (memory)", () => {
     expect(total).toBe(72);
   });
 
-  it("reads eight scheduled games and filters by competition", async () => {
+  it("reads eight games with the two seeded summaries", async () => {
     const games = await store.listGames(SEED_SEASON_ID);
     expect(games).toHaveLength(8);
     expect(games[0]).toMatchObject({
@@ -111,10 +111,18 @@ describe("league store (memory)", () => {
       awayTeam: "Faros",
       scheduledStart: "2026-03-07T23:00:00.000Z",
       competitionId: SEED_COMPETITION_IDS[0],
-      coverage: "full",
-      dataSource: "official",
+      coverage: "summary",
+      dataSource: "import",
       lastSeq: -1,
     });
+    expect(games[2]).toMatchObject({
+      id: "0192f3d0-0000-7000-8000-000000000202",
+      homeTeam: "Mantarrayos",
+      awayTeam: "Corsarios",
+      competitionId: SEED_COMPETITION_IDS[1],
+      coverage: "summary",
+    });
+    expect(games[1]).toMatchObject({ coverage: "full", dataSource: "official" });
     expect(games[7]!.scheduledStart).toBe("2026-04-25T23:00:00.000Z");
     expect(games.every((row) => row.seasonId === SEED_SEASON_ID)).toBe(true);
 
@@ -125,6 +133,27 @@ describe("league store (memory)", () => {
     const sur = await store.listGames(SEED_SEASON_ID, SEED_COMPETITION_IDS[1]);
     expect(sur).toHaveLength(4);
     expect(sur.every((row) => row.competitionId === SEED_COMPETITION_IDS[1])).toBe(true);
+  });
+
+  it("reads one game by id and its stored summary", async () => {
+    const game = await store.getGame("0192f3d0-0000-7000-8000-000000000200");
+    expect(game).toMatchObject({
+      id: "0192f3d0-0000-7000-8000-000000000200",
+      homeTeam: "Tiburones",
+      awayTeam: "Faros",
+      coverage: "summary",
+    });
+
+    const summary = await store.getGameSummary(game!.id);
+    expect(summary).toMatchObject({
+      homeScore: 5,
+      awayScore: 3,
+      linescore: null,
+      teamBox: null,
+      source: "seed",
+    });
+
+    expect(await store.getGame("0192f3d0-0000-7000-8000-000000000099")).toBeNull();
   });
 
   it("seeds idempotently", async () => {

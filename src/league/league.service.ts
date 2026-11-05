@@ -4,6 +4,7 @@ import { foldEvents, type GameStatus } from "../domain/fold.js";
 import {
   LEAGUE_STORE,
   type CompetitionRecord,
+  type GameSummaryRecord,
   type LeagueGameRecord,
   type LeagueStore,
   type OrganizationRecord,
@@ -43,6 +44,11 @@ export interface StandingGroup {
   competitionId: string;
   competitionName: string;
   teams: StandingRow[];
+}
+
+export interface LeagueGameDetail {
+  game: LeagueGameView;
+  summary: GameSummaryRecord | null;
 }
 
 function pct(wins: number, losses: number): number {
@@ -105,6 +111,15 @@ export class LeagueService {
     await this.optionalCompetition(season.id, competitionId);
     const games = await this.league.listGames(season.id, competitionId);
     return Promise.all(games.map((game) => this.gameView(game)));
+  }
+
+  async getGame(id: string): Promise<LeagueGameDetail> {
+    const game = await this.league.getGame(id);
+    if (!game) throw new NotFoundException(`game ${id} not found`);
+    return {
+      game: await this.gameView(game),
+      summary: await this.league.getGameSummary(game.id),
+    };
   }
 
   async getStandings(seasonId: string, competitionId?: string): Promise<StandingGroup[]> {

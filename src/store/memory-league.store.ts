@@ -190,6 +190,11 @@ export class MemoryLeagueStore implements LeagueStore {
     return record ? { ...record } : null;
   }
 
+  async getGame(id: string): Promise<LeagueGameRecord | null> {
+    const record = this.games.get(id);
+    return record ? this.enrichGame(record) : null;
+  }
+
   async ping(): Promise<void> {
     return;
   }

@@ -15,6 +15,7 @@ import { LEAGUE_STORE, type LeagueStore } from "../src/store/league.store.js";
 
 const UNKNOWN = "0192f3d0-0000-7000-8000-000000000099";
 const NORTH_GAME_ID = "0192f3d0-0000-7000-8000-000000000200";
+const SOUTH_GAME_ID = "0192f3d0-0000-7000-8000-000000000202";
 
 let app: INestApplication;
 let league: LeagueStore;
@@ -114,20 +115,39 @@ describe("league reads over the seeded catalog", () => {
     });
   });
 
-  it("lists eight scheduled games and filters by competition", async () => {
+  it("lists eight games with the two seeded summary finals", async () => {
     const all = await request(app.getHttpServer())
       .get(`/seasons/${SEED_SEASON_ID}/games`)
       .expect(200);
     expect(all.body).toHaveLength(8);
-    expect(all.body.every((game: { status: string }) => game.status === "scheduled")).toBe(true);
-    expect(all.body.every((game: { score: unknown }) => game.score === null)).toBe(true);
-    expect(all.body[0]).toMatchObject({
+
+    const north = all.body.find((game: { id: string }) => game.id === NORTH_GAME_ID);
+    expect(north).toMatchObject({
       id: NORTH_GAME_ID,
       homeTeam: "Tiburones",
       awayTeam: "Faros",
-      status: "scheduled",
-      score: null,
+      status: "final",
+      score: { home: 5, away: 3 },
+      coverage: "summary",
     });
+
+    const south = all.body.find((game: { id: string }) => game.id === SOUTH_GAME_ID);
+    expect(south).toMatchObject({
+      homeTeam: "Mantarrayos",
+      awayTeam: "Corsarios",
+      status: "final",
+      score: { home: 2, away: 1 },
+      coverage: "summary",
+    });
+
+    expect(
+      all.body
+        .filter((game: { id: string }) => game.id !== NORTH_GAME_ID && game.id !== SOUTH_GAME_ID)
+        .every(
+          (game: { status: string; score: unknown }) =>
+            game.status === "scheduled" && game.score === null,
+        ),
+    ).toBe(true);
 
     const norte = await request(app.getHttpServer())
       .get(`/seasons/${SEED_SEASON_ID}/games?competitionId=${SEED_COMPETITION_IDS[0]}`)
@@ -140,7 +160,7 @@ describe("league reads over the seeded catalog", () => {
     ).toBe(true);
   });
 
-  it("groups standings by competition with two 0-0 teams each", async () => {
+  it("groups standings by competition with the seeded finals", async () => {
     const response = await request(app.getHttpServer())
       .get(`/seasons/${SEED_SEASON_ID}/standings`)
       .expect(200);
@@ -149,19 +169,66 @@ describe("league reads over the seeded catalog", () => {
     expect(response.body.map((group: { competitionName: string }) => group.competitionName)).toEqual(
       ["Zona Norte", "Zona Sur"],
     );
-    for (const group of response.body) {
-      expect(group.teams).toHaveLength(2);
-      expect(
-        group.teams.every(
-          (row: { w: number; l: number; pct: number; gamesPlayed: number }) =>
-            row.w === 0 && row.l === 0 && row.pct === 0 && row.gamesPlayed === 0,
-        ),
-      ).toBe(true);
-    }
-    expect(response.body[0].teams.map((row: { team: string }) => row.team)).toEqual([
-      "Faros",
-      "Tiburones",
+
+    const norte = response.body[0];
+    expect(norte.teams.map((row: { team: string }) => row.team)).toEqual(["Tiburones", "Faros"]);
+    expect(norte.teams.map((row: { w: number; l: number }) => [row.w, row.l])).toEqual([
+      [1, 0],
+      [0, 1],
     ]);
+
+    const sur = response.body[1];
+    expect(sur.teams.map((row: { team: string }) => row.team)).toEqual([
+      "Mantarrayos",
+      "Corsarios",
+    ]);
+    expect(sur.teams.map((row: { w: number; l: number }) => [row.w, row.l])).toEqual([
+      [1, 0],
+      [0, 1],
+    ]);
+  });
+});
+
+describe("league game detail", () => {
+  it("returns a summary final with its stored score", async () => {
+    const response = await request(app.getHttpServer())
+      .get(`/league-games/${NORTH_GAME_ID}`)
+      .expect(200);
+
+    expect(response.body.game).toMatchObject({
+      id: NORTH_GAME_ID,
+      homeTeam: "Tiburones",
+      awayTeam: "Faros",
+      coverage: "summary",
+      status: "final",
+      score: { home: 5, away: 3 },
+    });
+    expect(response.body.summary).toMatchObject({
+      gameId: NORTH_GAME_ID,
+      homeScore: 5,
+      awayScore: 3,
+      linescore: null,
+      teamBox: null,
+      source: "seed",
+    });
+  });
+
+  it("returns the second seeded summary final", async () => {
+    const response = await request(app.getHttpServer())
+      .get("/league-games/0192f3d0-0000-7000-8000-000000000202")
+      .expect(200);
+
+    expect(response.body.game).toMatchObject({
+      homeTeam: "Mantarrayos",
+      awayTeam: "Corsarios",
+      status: "final",
+      score: { home: 2, away: 1 },
+    });
+    expect(response.body.summary).toMatchObject({ homeScore: 2, awayScore: 1, source: "seed" });
+  });
+
+  it("answers 404 for an unknown league game", async () => {
+    await request(app.getHttpServer()).get(`/league-games/${UNKNOWN}`).expect(404);
   });
 });
 
@@ -178,9 +245,9 @@ describe("stored summary standings", () => {
     });
   });
 
-  it("marks the summarized game final with its stored score", async () => {
+  it("marks both summarized games final with their stored scores", async () => {
     const response = await request(app.getHttpServer())
-      .get(`/seasons/${SEED_SEASON_ID}/games?competitionId=${SEED_COMPETITION_IDS[0]}`)
+      .get(`/seasons/${SEED_SEASON_ID}/games`)
       .expect(200);
 
     const game = response.body.find((row: { id: string }) => row.id === NORTH_GAME_ID);
@@ -188,14 +255,21 @@ describe("stored summary standings", () => {
       status: "final",
       score: { home: 5, away: 3 },
     });
+
+    const south = response.body.find((row: { id: string }) => row.id === SOUTH_GAME_ID);
+    expect(south).toMatchObject({
+      status: "final",
+      score: { home: 2, away: 1 },
+    });
+
     expect(
       response.body
-        .filter((row: { id: string }) => row.id !== NORTH_GAME_ID)
+        .filter((row: { id: string }) => row.id !== NORTH_GAME_ID && row.id !== SOUTH_GAME_ID)
         .every((row: { status: string }) => row.status === "scheduled"),
     ).toBe(true);
   });
 
-  it("counts the summary in Norte standings only", async () => {
+  it("counts the summaries in their own division", async () => {
     const response = await request(app.getHttpServer())
       .get(`/seasons/${SEED_SEASON_ID}/standings`)
       .expect(200);
@@ -229,7 +303,28 @@ describe("stored summary standings", () => {
     const sur = response.body.find(
       (group: { competitionId: string }) => group.competitionId === SEED_COMPETITION_IDS[1],
     );
-    expect(sur.teams.every((row: { gamesPlayed: number }) => row.gamesPlayed === 0)).toBe(true);
+    expect(sur.teams).toEqual([
+      {
+        teamSeasonId: SEED_TEAM_SEASON_IDS[2],
+        team: "Mantarrayos",
+        w: 1,
+        l: 0,
+        runsFor: 2,
+        runsAgainst: 1,
+        pct: 1,
+        gamesPlayed: 1,
+      },
+      {
+        teamSeasonId: SEED_TEAM_SEASON_IDS[3],
+        team: "Corsarios",
+        w: 0,
+        l: 1,
+        runsFor: 1,
+        runsAgainst: 2,
+        pct: 0,
+        gamesPlayed: 1,
+      },
+    ]);
   });
 });
 
