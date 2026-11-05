@@ -32,8 +32,8 @@ API port is 3001 (web 3000, scorer 3002).
 
 ## Language
 
-Code, identifiers, file and directory names, route segments, API paths, schema fields and
-commit messages are English. Product/UI copy and user-facing documentation are Spanish.
+Code, identifiers, comments, file and directory names, route segments, API paths, schema fields and
+commit messages are English. Product/UI copy is Spanish.
 Routes are English, kebab-case nouns: `/games/[id]/score`, `/teams/[slug]`,
 `/games/[id]/verify`, `/new`. Never `/juego/[id]/anotar`, `/equipos/[slug]` or `/nuevo`.
 Do not add Spanish redirects for old routes; update the links.
