@@ -3,6 +3,8 @@ import type {
   CompetitionInput,
   CompetitionRecord,
   CreateLeagueGameInput,
+  GameSummaryInput,
+  GameSummaryRecord,
   LeagueGameRecord,
   LeagueStore,
   OrganizationInput,
@@ -46,6 +48,7 @@ export class MemoryLeagueStore implements LeagueStore {
   private readonly players = new Map<string, PlayerRecord>();
   private readonly rosterEntries = new Map<string, RosterEntryInput>();
   private readonly games = new Map<string, LeagueGameRecord>();
+  private readonly gameSummaries = new Map<string, GameSummaryRecord>();
 
   async upsertOrganization(input: OrganizationInput): Promise<OrganizationRecord> {
     const existing = [...this.organizations.values()].find((row) => row.slug === input.slug);
@@ -109,6 +112,12 @@ export class MemoryLeagueStore implements LeagueStore {
     return this.enrichGame(record);
   }
 
+  async upsertGameSummary(input: GameSummaryInput): Promise<GameSummaryRecord> {
+    const record: GameSummaryRecord = { ...input };
+    this.gameSummaries.set(record.gameId, record);
+    return { ...record };
+  }
+
   async listOrganizations(): Promise<OrganizationRecord[]> {
     return [...this.organizations.values()]
       .sort((a, b) => compareText(a.name, b.name) || compareText(a.id, b.id))
@@ -125,6 +134,11 @@ export class MemoryLeagueStore implements LeagueStore {
       .filter((row) => organizationId === undefined || row.organizationId === organizationId)
       .sort((a, b) => b.year - a.year || compareText(a.name, b.name) || compareText(a.id, b.id))
       .map((record) => ({ ...record }));
+  }
+
+  async getCompetition(id: string): Promise<CompetitionRecord | null> {
+    const record = this.competitions.get(id);
+    return record ? { ...record } : null;
   }
 
   async listCompetitions(seasonId: string): Promise<CompetitionRecord[]> {
@@ -169,6 +183,11 @@ export class MemoryLeagueStore implements LeagueStore {
           compareText(a.id, b.id),
       )
       .map((record) => this.enrichGame(record));
+  }
+
+  async getGameSummary(gameId: string): Promise<GameSummaryRecord | null> {
+    const record = this.gameSummaries.get(gameId);
+    return record ? { ...record } : null;
   }
 
   async ping(): Promise<void> {

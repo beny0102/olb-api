@@ -6,6 +6,8 @@ import { GamesService } from "./games/games.service.js";
 import { ProposalsController } from "./games/proposals.controller.js";
 import { ProposalsService } from "./games/proposals.service.js";
 import { StandingsController } from "./games/standings.controller.js";
+import { LeagueController } from "./league/league.controller.js";
+import { LeagueService } from "./league/league.service.js";
 import { LEAGUE_STORE, type LeagueStore } from "./store/league.store.js";
 import { MemoryLeagueStore } from "./store/memory-league.store.js";
 import { MemoryEventStore } from "./store/memory.store.js";
@@ -16,10 +18,17 @@ import { PostgresEventStore } from "./store/postgres.store.js";
 import { EVENT_STORE, type EventStore } from "./store/store.js";
 
 @Module({
-  controllers: [HealthController, GamesController, ProposalsController, StandingsController],
+  controllers: [
+    HealthController,
+    GamesController,
+    ProposalsController,
+    StandingsController,
+    LeagueController,
+  ],
   providers: [
     GamesService,
     ProposalsService,
+    LeagueService,
     {
       provide: PG_POOL,
       useFactory: async (): Promise<pg.Pool | null> => {

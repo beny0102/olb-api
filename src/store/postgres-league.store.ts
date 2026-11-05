@@ -3,6 +3,8 @@ import type {
   CompetitionInput,
   CompetitionRecord,
   CreateLeagueGameInput,
+  GameSummaryInput,
+  GameSummaryRecord,
   LeagueGameRecord,
   LeagueStore,
   OrganizationInput,
@@ -104,6 +106,16 @@ interface GameRow {
   seq: number;
 }
 
+interface GameSummaryRow {
+  game_id: string;
+  home_score: number | null;
+  away_score: number | null;
+  linescore: unknown;
+  team_box: unknown;
+  source: string | null;
+  updated_at: Date;
+}
+
 function toOrganization(row: OrganizationRow): OrganizationRecord {
   return {
     id: row.id,
@@ -202,6 +214,18 @@ function toGame(row: GameRow): LeagueGameRecord {
     rulesProfile: row.rules_profile,
     createdAt: row.created_at.toISOString(),
     lastSeq: row.seq,
+  };
+}
+
+function toGameSummary(row: GameSummaryRow): GameSummaryRecord {
+  return {
+    gameId: row.game_id,
+    homeScore: row.home_score,
+    awayScore: row.away_score,
+    linescore: row.linescore,
+    teamBox: row.team_box,
+    source: row.source,
+    updatedAt: row.updated_at.toISOString(),
   };
 }
 
@@ -452,6 +476,32 @@ export class PostgresLeagueStore implements LeagueStore {
     return toGame(rows[0]!);
   }
 
+  async upsertGameSummary(input: GameSummaryInput): Promise<GameSummaryRecord> {
+    const { rows } = await this.pool.query<GameSummaryRow>(
+      `INSERT INTO game_summaries
+         (game_id, home_score, away_score, linescore, team_box, source, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (game_id) DO UPDATE SET
+         home_score = EXCLUDED.home_score,
+         away_score = EXCLUDED.away_score,
+         linescore = EXCLUDED.linescore,
+         team_box = EXCLUDED.team_box,
+         source = EXCLUDED.source,
+         updated_at = EXCLUDED.updated_at
+       RETURNING game_id, home_score, away_score, linescore, team_box, source, updated_at`,
+      [
+        input.gameId,
+        input.homeScore,
+        input.awayScore,
+        input.linescore,
+        input.teamBox,
+        input.source,
+        input.updatedAt,
+      ],
+    );
+    return toGameSummary(rows[0]!);
+  }
+
   async listOrganizations(): Promise<OrganizationRecord[]> {
     const { rows } = await this.pool.query<OrganizationRow>(
       `SELECT id, name, slug, created_at FROM organizations ORDER BY name ASC, id ASC`,
@@ -482,6 +532,15 @@ export class PostgresLeagueStore implements LeagueStore {
 
     const { rows } = await this.pool.query<SeasonRow>(query, params);
     return rows.map(toSeason);
+  }
+
+  async getCompetition(id: string): Promise<CompetitionRecord | null> {
+    const { rows } = await this.pool.query<CompetitionRow>(
+      `SELECT id, season_id, parent_id, name, kind, level, sort_order
+         FROM competitions WHERE id = $1`,
+      [id],
+    );
+    return rows[0] ? toCompetition(rows[0]) : null;
   }
 
   async listCompetitions(seasonId: string): Promise<CompetitionRecord[]> {
@@ -540,6 +599,15 @@ export class PostgresLeagueStore implements LeagueStore {
 
     const { rows } = await this.pool.query<GameRow>(query, params);
     return rows.map(toGame);
+  }
+
+  async getGameSummary(gameId: string): Promise<GameSummaryRecord | null> {
+    const { rows } = await this.pool.query<GameSummaryRow>(
+      `SELECT game_id, home_score, away_score, linescore, team_box, source, updated_at
+         FROM game_summaries WHERE game_id = $1`,
+      [gameId],
+    );
+    return rows[0] ? toGameSummary(rows[0]) : null;
   }
 
   async ping(): Promise<void> {

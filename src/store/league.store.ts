@@ -123,6 +123,23 @@ export interface LeagueGameRecord {
 }
 
 /**
+ * A stored score for a game whose log is not in this system: `summary` games
+ * have a linescore and box score, `external` games may have only the final.
+ * The event log remains authoritative for `full` coverage.
+ */
+export interface GameSummaryInput {
+  gameId: string;
+  homeScore: number | null;
+  awayScore: number | null;
+  linescore: unknown;
+  teamBox: unknown;
+  source: string | null;
+  updatedAt: string;
+}
+
+export type GameSummaryRecord = GameSummaryInput;
+
+/**
  * League catalog reads and idempotent seed upserts. This is separate from
  * `EventStore`: a league row is descriptive metadata, while the event log
  * remains the only source of truth for a game's state and score.
@@ -138,15 +155,18 @@ export interface LeagueStore {
   upsertPlayer(input: PlayerInput): Promise<PlayerRecord>;
   upsertRosterEntry(input: RosterEntryInput): Promise<RosterEntryRecord>;
   upsertGame(input: CreateLeagueGameInput): Promise<LeagueGameRecord>;
+  upsertGameSummary(input: GameSummaryInput): Promise<GameSummaryRecord>;
 
   listOrganizations(): Promise<OrganizationRecord[]>;
   getSeason(id: string): Promise<SeasonRecord | null>;
   listSeasons(organizationId?: string): Promise<SeasonRecord[]>;
+  getCompetition(id: string): Promise<CompetitionRecord | null>;
   listCompetitions(seasonId: string): Promise<CompetitionRecord[]>;
   listTeams(competitionId: string): Promise<TeamSeasonRecord[]>;
   getTeamSeason(id: string): Promise<TeamSeasonRecord | null>;
   listRoster(teamSeasonId: string): Promise<RosterEntryRecord[]>;
   listGames(seasonId: string, competitionId?: string): Promise<LeagueGameRecord[]>;
+  getGameSummary(gameId: string): Promise<GameSummaryRecord | null>;
 
   ping(): Promise<void>;
 }

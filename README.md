@@ -38,8 +38,9 @@ docker run --rm -p 5432:5432 \
 DATABASE_URL=postgres://postgres:olb@localhost:5432/olb npm start
 ```
 
-The schema is created on startup (`games`, `events` and `proposals` tables). The `games`
-row keeps the optional `scheduled_start` and `venue` columns next to the teams.
+The schema is created on startup (`games`, `events`, `proposals` and the league
+catalog tables). The `games` row keeps the optional `scheduled_start` and
+`venue` columns next to the teams.
 If you reuse a volume created by an earlier build, recreate it
 (`docker compose down -v`, or remove the container): the DDL uses
 `CREATE TABLE IF NOT EXISTS` and does not add columns to an existing table.
@@ -70,6 +71,43 @@ log already folds to `scheduled`, so `game.start` is appended only when the scor
 answers `409`. Finishing uses the folded score unless `finalScore` is given;
 a provided score that disagrees with the fold is also a `409` and nothing is
 appended.
+
+## League domain
+
+The catalog is stored in Postgres next to the event log: organizations, seasons,
+competitions (leagues or divisions), teams, team seasons, players, roster entries
+and games. With `DATABASE_URL` set, the API runs the migrations on startup;
+without it the in-memory store is seeded on demand.
+
+```bash
+export DATABASE_URL=postgres://postgres:olb@localhost:5432/olb
+npm run db:migrate     # apply pending migrations (also runs on API startup)
+npm run seed:league    # idempotent Liga Metropolitana seed
+```
+
+The seed creates one organization, one active season, two divisions, four teams
+with 18-player rosters and eight scheduled games. It is fictional and safe to
+run twice: every row is upserted by its natural key.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/organizations` | List organizations |
+| GET | `/seasons?organizationId=` | Seasons, active first then year descending |
+| GET | `/seasons/:id` | Season with its competitions |
+| GET | `/seasons/:id/competitions` | Competitions of a season |
+| GET | `/competitions/:id/teams` | Team seasons in a competition |
+| GET | `/team-seasons/:id` | Team season with its roster |
+| GET | `/seasons/:id/games?competitionId=` | Games with status and score |
+| GET | `/seasons/:id/standings?competitionId=` | Standings grouped by competition |
+
+Game status and score are derived, never stored by hand. A `full` game is
+projected from its event log. A `summary` or `external` game reads the
+`game_summaries` row instead, and a game with neither stays `scheduled` with a
+`null` score. Standings count only `final` and `forfeit` games: a tie counts as
+a game played but adds no win or loss, and rows are ordered by winning
+percentage, wins, runs against and name. An unknown season, competition, team
+season or competition filter answers `404`.
+
 
 Appending a pitch:
 
@@ -224,7 +262,7 @@ the table is ordered by winning percentage and then run differential.
 
 - Realtime gateway (WebSocket, snapshot + delta, resume from `fromSeq`)
 - Authentication, roles, and per-game write authorization
-- League ERP entities (leagues, seasons, teams, rosters) and stats
+- League write/admin endpoints, memberships and statistics
 - Postgres integration tests in CI
 - Docker image
 
@@ -232,7 +270,7 @@ the table is ordered by winning percentage and then run differential.
 
 ```bash
 npm run typecheck
-npm test          # fold rules, lifecycle and HTTP box score/standings
+npm test          # fold rules, lifecycle, HTTP box score/standings and league reads
 ```
 
 ## License
