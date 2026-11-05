@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Inject, Param, Post, Query } from "@nestjs/common";
+import {
+  Body,
+  Controller,
+  Get,
+  Inject,
+  Param,
+  Post,
+  Query,
+  Sse,
+  type MessageEvent,
+} from "@nestjs/common";
+import { map, type Observable } from "rxjs";
 import { GamesService } from "./games.service.js";
 
 function parseFromSeq(value: string | undefined): number {
@@ -45,6 +56,12 @@ export class GamesController {
   @Get(":id/events")
   events(@Param("id") id: string, @Query("fromSeq") fromSeq?: string) {
     return this.games.listEvents(id, parseFromSeq(fromSeq));
+  }
+
+  @Sse(":id/stream")
+  async stream(@Param("id") id: string): Promise<Observable<MessageEvent>> {
+    const messages = await this.games.streamGame(id);
+    return messages.pipe(map((data): MessageEvent => ({ data })));
   }
 
   @Get(":id")

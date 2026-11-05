@@ -12,11 +12,13 @@ import { ScopesService } from "./auth/scopes.js";
 import { HealthController } from "./health.controller.js";
 import { GamesController } from "./games/games.controller.js";
 import { GamesService } from "./games/games.service.js";
+import { GameStreamService } from "./games/game-stream.service.js";
 import { ProposalsController } from "./games/proposals.controller.js";
 import { ProposalsService } from "./games/proposals.service.js";
 import { StandingsController } from "./games/standings.controller.js";
 import { LeagueController } from "./league/league.controller.js";
 import { LeagueService } from "./league/league.service.js";
+import { StatsService } from "./league/stats.service.js";
 import { LEAGUE_STORE, type LeagueStore } from "./store/league.store.js";
 import { MemoryLeagueStore } from "./store/memory-league.store.js";
 import { MemoryEventStore } from "./store/memory.store.js";
@@ -38,8 +40,10 @@ import { EVENT_STORE, type EventStore } from "./store/store.js";
   ],
   providers: [
     GamesService,
+    GameStreamService,
     ProposalsService,
     LeagueService,
+    StatsService,
     AuthService,
     AuthGuard,
     LogoutGuard,

@@ -1,5 +1,6 @@
 import { Controller, Get, Inject, Param, Query } from "@nestjs/common";
 import { LeagueService } from "./league.service.js";
+import { StatsService } from "./stats.service.js";
 
 function optional(value: string | undefined): string | undefined {
   return value === undefined || value === "" ? undefined : value;
@@ -7,7 +8,10 @@ function optional(value: string | undefined): string | undefined {
 
 @Controller()
 export class LeagueController {
-  constructor(@Inject(LeagueService) private readonly league: LeagueService) {}
+  constructor(
+    @Inject(LeagueService) private readonly league: LeagueService,
+    @Inject(StatsService) private readonly stats: StatsService,
+  ) {}
 
   @Get("organizations")
   organizations() {
@@ -47,6 +51,16 @@ export class LeagueController {
   @Get("seasons/:id/standings")
   standings(@Param("id") id: string, @Query("competitionId") competitionId?: string) {
     return this.league.getStandings(id, optional(competitionId));
+  }
+
+  @Get("seasons/:id/leaders")
+  leaders(@Param("id") id: string, @Query("competitionId") competitionId?: string) {
+    return this.stats.getLeaders(id, optional(competitionId));
+  }
+
+  @Get("seasons/:id/stats")
+  statsForSeason(@Param("id") id: string, @Query("competitionId") competitionId?: string) {
+    return this.stats.getSeasonStats(id, optional(competitionId));
   }
 
   @Get("league-games/:id")

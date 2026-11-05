@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { parseEvent } from "@olb/contract";
 import type { Event } from "@olb/contract/types";
+import { filter, map, merge, of, type Observable } from "rxjs";
 import {
   foldBoxScore,
   foldEvents,
@@ -17,6 +18,7 @@ import { computeStandings, type Standings } from "../domain/standings.js";
 import { isUuidV7, uuidv7 } from "../domain/uuid7.js";
 import { GameNotFoundError } from "../store/errors.js";
 import { EVENT_STORE, type EventStore, type GameRecord } from "../store/store.js";
+import { GameStreamService, type GameStreamMessage } from "./game-stream.service.js";
 
 const MAX_NAME = 120;
 const MAX_VENUE = 200;
@@ -108,7 +110,10 @@ function finalScore(value: unknown): { home: number; away: number } {
 
 @Injectable()
 export class GamesService {
-  constructor(@Inject(EVENT_STORE) private readonly store: EventStore) {}
+  constructor(
+    @Inject(EVENT_STORE) private readonly store: EventStore,
+    @Inject(GameStreamService) private readonly stream: GameStreamService,
+  ) {}
 
   async listGames(): Promise<GameRecord[]> {
     return (await this.store.listGames()).map((game) => this.view(game));
@@ -160,7 +165,7 @@ export class GamesService {
       });
     });
 
-    return this.withState(id);
+    return this.publishAndReturn(id, await this.withState(id));
   }
 
   async finishGame(id: string, body: unknown): Promise<GameRecord & { state: GameState }> {
@@ -195,7 +200,7 @@ export class GamesService {
       }),
     );
 
-    return this.withState(id);
+    return this.publishAndReturn(id, await this.withState(id));
   }
 
   async getBoxScore(id: string): Promise<GameBoxScore> {
@@ -252,7 +257,9 @@ export class GamesService {
     }
 
     try {
-      return await this.store.append(id, (seq) => this.buildEvent(id, seq, input));
+      const event = await this.store.append(id, (seq) => this.buildEvent(id, seq, input));
+      await this.publishState(id);
+      return event;
     } catch (error) {
       // Two concurrent retries can both miss the first lookup. The unique
       // index lets only one append; the loser adopts the winner's event.
@@ -264,6 +271,26 @@ export class GamesService {
   }
 
   /**
+   * Initial snapshot followed by every state published after an append. The
+   * service's replay buffer closes the gap between the read and the
+   * subscription; the publish cursor filters states the snapshot already
+   * covers without hiding a first event at seq 0.
+   */
+  async streamGame(id: string): Promise<Observable<GameStreamMessage>> {
+    // Capture the publish cursor before reading the snapshot. An append in
+    // between is replayed and may duplicate the snapshot, but can never be
+    // lost; a cursor read afterwards could hide a genuine first event at seq 0.
+    const cursor = this.stream.cursor(id);
+    const snapshotState = await this.getState(id);
+    const snapshot = of(this.streamMessage("snapshot", id, snapshotState));
+    const updates = this.stream.watch(id).pipe(
+      filter((update) => update.revision > cursor),
+      map((update) => this.streamMessage("state", id, update.state)),
+    );
+    return merge(snapshot, updates);
+  }
+
+  /**
    * The record plus the projection after the write, which is what the
    * lifecycle endpoints return to a scorekeeper.
    */
@@ -271,6 +298,28 @@ export class GamesService {
     const game = await this.getGame(id);
     const events = await this.store.listEvents(id, 0);
     return { ...game, state: foldEvents(events) };
+  }
+
+  /** Publishes the current projection and returns the lifecycle response. */
+  private async publishAndReturn(
+    id: string,
+    result: GameRecord & { state: GameState },
+  ): Promise<GameRecord & { state: GameState }> {
+    this.stream.publish(id, result.state);
+    return result;
+  }
+
+  private async publishState(id: string): Promise<void> {
+    const events = await this.store.listEvents(id, 0);
+    this.stream.publish(id, foldEvents(events));
+  }
+
+  private streamMessage(
+    type: GameStreamMessage["type"],
+    gameId: string,
+    state: GameState,
+  ): GameStreamMessage {
+    return { type, gameId, seq: state.lastSeq, lastSeq: state.lastSeq, state };
   }
 
   /**

@@ -6,8 +6,9 @@ and serves the game state derived from it.
 **Status: pre-alpha.** A game can be scheduled, started, scored through the
 API, finished, and read back as a box score and standings derived from its
 event log. League operators can log in and manage the catalog through scoped
-admin endpoints. There is no realtime transport yet, and the legacy
-event/proposal writes are still open until scorer login lands in D2.
+admin endpoints. Game state can also be followed over SSE, and season leaders
+are folded from full-game logs. The legacy event/proposal writes are still open
+until scorer login lands in D2.
 
 ## Quick start
 
@@ -60,6 +61,7 @@ If you reuse a volume created by an earlier build, recreate it
 | GET | `/games/:id/state` | Projection folded from the whole log |
 | GET | `/games/:id/boxscore` | Runs, hits, errors and linescore derived from the log |
 | GET | `/games/:id/events?fromSeq=N` | Event log from a sequence number |
+| GET | `/games/:id/stream` | SSE: initial `snapshot`, then `state` after each append |
 | POST | `/games/:id/events` | Append one event |
 | POST | `/games/:id/proposals` | Propose a play (two-person mode) |
 | GET | `/games/:id/proposals?status=open\|accepted\|rejected\|all` | List proposals, default `open` |
@@ -101,14 +103,22 @@ run twice: every row is upserted by its natural key.
 | GET | `/team-seasons/:id` | Team season with its roster |
 | GET | `/seasons/:id/games?competitionId=` | Games with status and score |
 | GET | `/seasons/:id/standings?competitionId=` | Standings grouped by competition |
+| GET | `/seasons/:id/leaders?competitionId=` | Batting and pitching leaders from full-game logs |
+| GET | `/seasons/:id/stats?competitionId=` | Standings groups plus batting and pitching leaders |
 
 Game status and score are derived, never stored by hand. A `full` game is
 projected from its event log. A `summary` or `external` game reads the
 `game_summaries` row instead, and a game with neither stays `scheduled` with a
 `null` score. Standings count only `final` and `forfeit` games: a tie counts as
 a game played but adds no win or loss, and rows are ordered by winning
-percentage, wins, runs against and name. An unknown season, competition, team
-season or competition filter answers `404`.
+percentage, wins, runs against and name.
+
+Season leaders fold the applied events of `full` games. Summary and external
+games still count in the standings but cannot contribute player lines because
+they have no play-by-play. Batting exposes PA, AB, H, HR, RBI, R, BB, SO, HBP
+and AVG (three decimals, `null` when AB is zero); pitching exposes pitches, SO,
+BB and appearances. Unsupported fields such as ERA are not invented. An unknown
+season, competition, team season or competition filter answers `404`.
 
 
 ## Authentication and scopes
@@ -338,10 +348,11 @@ the table is ordered by winning percentage and then run differential.
 
 ## Not implemented yet
 
-- Realtime gateway (WebSocket, snapshot + delta, resume from `fromSeq`)
+- Realtime resume from an event cursor (the SSE stream starts with a snapshot;
+  clients still reconcile through `/games/:id/events?fromSeq=`)
 - Scorer login and per-game write authorization for legacy event/proposal writes
 - Web and scorer login/admin interfaces
-- Statistics beyond the box score and standings
+- Advanced statistics such as ERA, fielding and situational splits
 - Postgres integration tests in CI
 - Docker image
 
