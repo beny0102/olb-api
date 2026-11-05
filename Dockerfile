@@ -1,11 +1,13 @@
 # syntax=docker/dockerfile:1
 
-# Build context is the parent directory of this repository (~/work/olb), because
-# @olb/contract is consumed as a file: dependency.
-FROM node:24-alpine AS build
+# Build context is the workspace root (~/work/olb), because @olb/contract is a
+# `file:../olb-contract` dependency and must be visible next to this repository.
+FROM node:22-alpine AS build
 WORKDIR /app
 
 COPY olb-contract ./olb-contract
+RUN npm ci --prefix olb-contract
+
 COPY olb-api/package.json olb-api/package-lock.json ./olb-api/
 RUN npm ci --prefix olb-api
 
@@ -13,7 +15,7 @@ COPY olb-api/tsconfig.json olb-api/tsconfig.build.json ./olb-api/
 COPY olb-api/src ./olb-api/src
 RUN npm run build --prefix olb-api
 
-FROM node:24-alpine AS runtime
+FROM node:22-alpine AS runtime
 ENV NODE_ENV=production \
     PORT=3001
 WORKDIR /app
@@ -27,9 +29,8 @@ COPY olb-api/package.json olb-api/package-lock.json ./olb-api/
 RUN npm ci --prefix olb-api --omit=dev
 
 COPY olb-contract ./olb-contract
-RUN npm cache clean --force
-
 COPY --from=build /app/olb-api/dist ./olb-api/dist
+RUN npm cache clean --force
 
 WORKDIR /app/olb-api
 USER node

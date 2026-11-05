@@ -48,6 +48,81 @@ If you reuse a volume created by an earlier build, recreate it
 (`docker compose down -v`, or remove the container): the DDL uses
 `CREATE TABLE IF NOT EXISTS` and does not add columns to an existing table.
 
+## Deployment package
+
+`deploy/` runs the whole stack with Docker Compose against the Postgres event
+store. The build context is the workspace root, because `@olb/contract` is a
+`file:../olb-contract` dependency. The package publishes alternate ports so it
+can run beside the manual `:3000/:3001/:3002` deployment without touching it:
+web `3200`, API `3201`, scorer `3202` and Postgres `55451` (all localhost).
+
+```bash
+cp deploy/.env.example deploy/.env
+
+# Build and start Postgres, API, web and scorer.
+docker compose -f deploy/docker-compose.yml up -d --build
+
+# Idempotent league catalog, demo users and memberships.
+docker compose -f deploy/docker-compose.yml run --rm api \
+  node dist/scripts/seed-league.js
+
+# Optional: append the reproducible nine-inning game through the public API.
+docker compose -f deploy/docker-compose.yml run --rm \
+  -e API_URL=http://api:3001 api node dist/scripts/seed-demo.js
+```
+
+| URL | What it is |
+| --- | --- |
+| <http://localhost:3200> | League portal |
+| <http://localhost:3200/stats> | Standings and season leaders |
+| <http://localhost:3201/health> | Liveness, contract version and storage kind |
+| <http://localhost:3202> | Offline-first scorer |
+
+The API applies pending migrations on startup; `seed-league` is safe to run
+twice. Demo credentials are listed under [Authentication and scopes](#authentication-and-scopes)
+and must be replaced before any deployment that is not local.
+
+```bash
+# Stop the stack. The named volume is project-scoped, so this only removes
+# the deploy package's Postgres data, never the manual olb-postgres volume.
+docker compose -f deploy/docker-compose.yml down -v
+```
+
+### Backups and restore
+
+```bash
+./deploy/backup.sh                       # deploy/backups/olb-YYYYmmdd-HHMMSS.dump
+RETENTION_DAYS=14 ./deploy/backup.sh     # keep 14 days instead of 7
+BACKUP_CONTAINER=olb-postgres ./deploy/backup.sh   # dump the manual deployment
+
+# Restore into a scratch database. `olb` itself requires --force.
+./deploy/restore.sh deploy/backups/olb-20261105-030000.dump --db olb_restore_test
+RESTORE_CONTAINER=olb-postgres \
+  ./deploy/restore.sh deploy/backups/olb-20261105-030000.dump --db olb_restore_test
+
+# Remove the drill database when the comparison is done.
+docker exec olb-postgres dropdb -U postgres olb_restore_test
+```
+
+`backup.sh` writes a custom-format archive (`pg_dump -Fc`), never a plain SQL
+file, and prunes by file age (`RETENTION_DAYS`, default 7). A nightly cron job:
+
+```cron
+0 3 * * * cd /home/benyp/work/olb/olb-api && ./deploy/backup.sh >> /var/log/olb-backup.log 2>&1
+```
+
+The same thing as a systemd timer (`/etc/systemd/system/olb-backup.service`
+plus `olb-backup.timer`, `OnCalendar=*-*-* 03:00:00`) is preferable on a host
+that already uses systemd. Whatever the scheduler, copy the dumps off-host:
+
+```bash
+rsync -a --delete deploy/backups/ backup-host:/srv/olb-backups/
+```
+
+A backup is not verified until it has been restored. Run the drill above after
+changing the schema, and compare the table counts and one game state before
+dropping the scratch database.
+
 ## Endpoints
 
 | Method | Path | Purpose |
@@ -354,7 +429,6 @@ the table is ordered by winning percentage and then run differential.
 - Web and scorer login/admin interfaces
 - Advanced statistics such as ERA, fielding and situational splits
 - Postgres integration tests in CI
-- Docker image
 
 ## Development
 
