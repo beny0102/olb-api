@@ -381,11 +381,12 @@ export class AdminService {
     }
 
     if (
+      !hasOrgAdmin(auth, season.organizationId) &&
       !hasCompetitionAdmin(auth, competition.id) &&
       !hasTeamRole(auth, home.id, ["team_admin", "scorer"]) &&
       !hasTeamRole(auth, away.id, ["team_admin", "scorer"])
     ) {
-      throw new ForbiddenException("competition or team admin role required");
+      throw new ForbiddenException("organization, competition or team admin role required");
     }
 
     return this.league.upsertGame({

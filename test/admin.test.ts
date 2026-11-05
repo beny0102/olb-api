@@ -212,6 +212,31 @@ describe("league admin writes", () => {
     );
   });
 
+  it("lets an organization admin create a scheduled game", async () => {
+    const response = await post("/admin/games", adminToken, {
+      seasonId: SEED_SEASON_ID,
+      competitionId: SEED_COMPETITION_IDS[0],
+      homeTeamSeasonId: teamSeasonAId,
+      awayTeamSeasonId: teamSeasonBId,
+      scheduledStart: "2027-04-17T23:00:00.000Z",
+      venue: "Estadio Metropolitano",
+    }).expect(201);
+
+    expect(response.body).toMatchObject({
+      seasonId: SEED_SEASON_ID,
+      competitionId: SEED_COMPETITION_IDS[0],
+      homeTeamSeasonId: teamSeasonAId,
+      awayTeamSeasonId: teamSeasonBId,
+      homeTeam: "Astros del Puerto",
+      awayTeam: "Bucaneros",
+      scheduledStart: "2027-04-17T23:00:00.000Z",
+      venue: "Estadio Metropolitano",
+      coverage: "full",
+      dataSource: "official",
+      lastSeq: -1,
+    });
+  });
+
   it("lets a team admin add a roster entry for their own team", async () => {
     const response = await post("/admin/roster-entries", tiburonesToken, {
       teamSeasonId: SEED_TEAM_SEASON_IDS[0],
