@@ -151,6 +151,11 @@ export class MemoryLeagueStore implements LeagueStore {
       .map((record) => ({ ...record }));
   }
 
+  async getTeam(id: string): Promise<TeamRecord | null> {
+    const record = this.teams.get(id);
+    return record ? { ...record } : null;
+  }
+
   async listTeams(competitionId: string): Promise<TeamSeasonRecord[]> {
     return [...this.teamSeasons.values()]
       .filter((row) => row.competitionId === competitionId)
@@ -161,6 +166,11 @@ export class MemoryLeagueStore implements LeagueStore {
   async getTeamSeason(id: string): Promise<TeamSeasonRecord | null> {
     const record = this.teamSeasons.get(id);
     return record ? this.enrichTeamSeason(record) : null;
+  }
+
+  async getPlayer(id: string): Promise<PlayerRecord | null> {
+    const record = this.players.get(id);
+    return record ? { ...record } : null;
   }
 
   async listRoster(teamSeasonId: string): Promise<RosterEntryRecord[]> {
@@ -193,6 +203,21 @@ export class MemoryLeagueStore implements LeagueStore {
   async getGame(id: string): Promise<LeagueGameRecord | null> {
     const record = this.games.get(id);
     return record ? this.enrichGame(record) : null;
+  }
+
+  async archiveActiveSeasons(organizationId: string, keepId?: string): Promise<number> {
+    let archived = 0;
+    for (const record of this.seasons.values()) {
+      if (
+        record.organizationId === organizationId &&
+        record.status === "active" &&
+        record.id !== keepId
+      ) {
+        record.status = "archived";
+        archived += 1;
+      }
+    }
+    return archived;
   }
 
   async ping(): Promise<void> {

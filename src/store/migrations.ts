@@ -142,6 +142,45 @@ CREATE INDEX IF NOT EXISTS games_home_team ON games (home_team_season_id);
 CREATE INDEX IF NOT EXISTS games_away_team ON games (away_team_season_id);
 `,
   },
+  {
+    version: "002_auth",
+    sql: `
+CREATE TABLE IF NOT EXISTS users (
+  id uuid PRIMARY KEY,
+  email text NOT NULL UNIQUE,
+  name text NOT NULL,
+  password_hash text NOT NULL,
+  status text NOT NULL CHECK (status IN ('active', 'disabled')),
+  created_at timestamptz NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id uuid PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash text NOT NULL UNIQUE,
+  created_at timestamptz NOT NULL,
+  expires_at timestamptz NOT NULL,
+  revoked_at timestamptz
+);
+
+CREATE TABLE IF NOT EXISTS memberships (
+  id uuid PRIMARY KEY,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  scope_type text NOT NULL CHECK (scope_type IN ('organization', 'competition', 'team_season')),
+  scope_id uuid NOT NULL,
+  role text NOT NULL CHECK (role IN (
+    'org_admin', 'competition_admin', 'team_admin', 'scorer', 'verifier', 'viewer'
+  )),
+  created_at timestamptz NOT NULL,
+  UNIQUE (user_id, scope_type, scope_id, role)
+);
+
+CREATE INDEX IF NOT EXISTS sessions_token_hash ON sessions (token_hash);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions (user_id);
+CREATE INDEX IF NOT EXISTS memberships_user ON memberships (user_id);
+CREATE INDEX IF NOT EXISTS memberships_scope ON memberships (scope_type, scope_id);
+`,
+  },
 ];
 
 /**

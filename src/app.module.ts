@@ -1,5 +1,14 @@
 import { Module } from "@nestjs/common";
 import type pg from "pg";
+import { AdminController } from "./admin/admin.controller.js";
+import { AdminService } from "./admin/admin.service.js";
+import { AuthController } from "./auth/auth.controller.js";
+import { AuthGuard, LogoutGuard } from "./auth/auth.guard.js";
+import { AuthService } from "./auth/auth.service.js";
+import { AUTH_STORE, type AuthStore } from "./auth/auth.store.js";
+import { MemoryAuthStore } from "./auth/memory-auth.store.js";
+import { PostgresAuthStore } from "./auth/postgres-auth.store.js";
+import { ScopesService } from "./auth/scopes.js";
 import { HealthController } from "./health.controller.js";
 import { GamesController } from "./games/games.controller.js";
 import { GamesService } from "./games/games.service.js";
@@ -24,11 +33,18 @@ import { EVENT_STORE, type EventStore } from "./store/store.js";
     ProposalsController,
     StandingsController,
     LeagueController,
+    AuthController,
+    AdminController,
   ],
   providers: [
     GamesService,
     ProposalsService,
     LeagueService,
+    AuthService,
+    AuthGuard,
+    LogoutGuard,
+    ScopesService,
+    AdminService,
     {
       provide: PG_POOL,
       useFactory: async (): Promise<pg.Pool | null> => {
@@ -51,6 +67,12 @@ import { EVENT_STORE, type EventStore } from "./store/store.js";
       inject: [PG_POOL],
       useFactory: (pool: pg.Pool | null): LeagueStore =>
         pool ? new PostgresLeagueStore(pool) : new MemoryLeagueStore(),
+    },
+    {
+      provide: AUTH_STORE,
+      inject: [PG_POOL],
+      useFactory: (pool: pg.Pool | null): AuthStore =>
+        pool ? new PostgresAuthStore(pool) : new MemoryAuthStore(),
     },
   ],
 })

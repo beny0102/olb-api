@@ -1,4 +1,6 @@
 import { seedLeague } from "./league-seed.js";
+import { seedAuth, SEED_AUTH_EMAILS } from "../auth/auth-seed.js";
+import { PostgresAuthStore } from "../auth/postgres-auth.store.js";
 import { runMigrations } from "../store/migrations.js";
 import { createPool } from "../store/pg.js";
 import { PostgresLeagueStore } from "../store/postgres-league.store.js";
@@ -18,6 +20,9 @@ async function main(): Promise<void> {
 
     const store = new PostgresLeagueStore(pool);
     await seedLeague(store);
+
+    const authStore = new PostgresAuthStore(pool);
+    await seedAuth(authStore);
 
     const organizations = await store.listOrganizations();
     const organization = organizations[0];
@@ -43,11 +48,21 @@ async function main(): Promise<void> {
     }
     const games = await store.listGames(season.id);
 
+    let authUsers = 0;
+    let memberships = 0;
+    for (const email of SEED_AUTH_EMAILS) {
+      const user = await authStore.getUserByEmail(email);
+      if (!user) continue;
+      authUsers += 1;
+      memberships += (await authStore.listMemberships(user.id)).length;
+    }
+
     console.log(
       `seeded league: ${organizations.length} organization, ${seasons.length} season, ` +
         `${competitions.length} competitions, ${teams} teams, ` +
         `${rosterEntries} roster entries, ${games.length} games`,
     );
+    console.log(`seeded auth: ${authUsers} users, ${memberships} memberships`);
   } finally {
     await pool.end();
   }

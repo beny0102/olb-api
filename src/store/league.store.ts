@@ -162,9 +162,13 @@ export interface LeagueStore {
   listSeasons(organizationId?: string): Promise<SeasonRecord[]>;
   getCompetition(id: string): Promise<CompetitionRecord | null>;
   listCompetitions(seasonId: string): Promise<CompetitionRecord[]>;
+  getTeam(id: string): Promise<TeamRecord | null>;
   listTeams(competitionId: string): Promise<TeamSeasonRecord[]>;
   getTeamSeason(id: string): Promise<TeamSeasonRecord | null>;
+  getPlayer(id: string): Promise<PlayerRecord | null>;
   listRoster(teamSeasonId: string): Promise<RosterEntryRecord[]>;
+  /** Archives every active season of an organization except `keepId`. */
+  archiveActiveSeasons(organizationId: string, keepId?: string): Promise<number>;
   listGames(seasonId: string, competitionId?: string): Promise<LeagueGameRecord[]>;
   getGame(id: string): Promise<LeagueGameRecord | null>;
   getGameSummary(gameId: string): Promise<GameSummaryRecord | null>;

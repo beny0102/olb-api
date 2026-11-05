@@ -553,6 +553,15 @@ export class PostgresLeagueStore implements LeagueStore {
     return rows.map(toCompetition);
   }
 
+  async getTeam(id: string): Promise<TeamRecord | null> {
+    const { rows } = await this.pool.query<TeamRow>(
+      `SELECT id, organization_id, name, slug, abbreviation, created_at
+         FROM teams WHERE id = $1`,
+      [id],
+    );
+    return rows[0] ? toTeam(rows[0]) : null;
+  }
+
   async listTeams(competitionId: string): Promise<TeamSeasonRecord[]> {
     const { rows } = await this.pool.query<TeamSeasonRow>(
       `${TEAM_SEASON_SELECT}
@@ -569,6 +578,15 @@ export class PostgresLeagueStore implements LeagueStore {
       [id],
     );
     return rows[0] ? toTeamSeason(rows[0]) : null;
+  }
+
+  async getPlayer(id: string): Promise<PlayerRecord | null> {
+    const { rows } = await this.pool.query<PlayerRow>(
+      `SELECT id, organization_id, first_name, last_name, created_at
+         FROM players WHERE id = $1`,
+      [id],
+    );
+    return rows[0] ? toPlayer(rows[0]) : null;
   }
 
   async listRoster(teamSeasonId: string): Promise<RosterEntryRecord[]> {
@@ -613,6 +631,17 @@ export class PostgresLeagueStore implements LeagueStore {
   async getGame(id: string): Promise<LeagueGameRecord | null> {
     const { rows } = await this.pool.query<GameRow>(`${GAME_SELECT} WHERE g.id = $1`, [id]);
     return rows[0] ? toGame(rows[0]) : null;
+  }
+
+  async archiveActiveSeasons(organizationId: string, keepId?: string): Promise<number> {
+    const { rowCount } = await this.pool.query(
+      `UPDATE seasons SET status = 'archived'
+        WHERE organization_id = $1
+          AND status = 'active'
+          AND ($2::uuid IS NULL OR id <> $2::uuid)`,
+      [organizationId, keepId ?? null],
+    );
+    return rowCount ?? 0;
   }
 
   async ping(): Promise<void> {

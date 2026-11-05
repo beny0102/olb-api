@@ -5,7 +5,9 @@ and serves the game state derived from it.
 
 **Status: pre-alpha.** A game can be scheduled, started, scored through the
 API, finished, and read back as a box score and standings derived from its
-event log. There is no authentication and no realtime transport yet.
+event log. League operators can log in and manage the catalog through scoped
+admin endpoints. There is no realtime transport yet, and the legacy
+event/proposal writes are still open until scorer login lands in D2.
 
 ## Quick start
 
@@ -108,6 +110,82 @@ a game played but adds no win or loss, and rows are ordered by winning
 percentage, wins, runs against and name. An unknown season, competition, team
 season or competition filter answers `404`.
 
+
+## Authentication and scopes
+
+Authentication is a Bearer token issued by `POST /auth/login` and kept as a
+SHA-256 hash in the `sessions` table. A session lasts seven days; logout revokes
+it. Email is matched case-insensitively. Passwords are stored with `scrypt`
+(`scrypt$<saltHex>$<hashHex>`), never in clear text, and no auth response
+includes the password hash.
+
+```bash
+curl -X POST http://localhost:3000/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"email":"admin@liga-metropolitana.olb","password":"olb-demo-admin"}'
+```
+
+Use the returned `token` on guarded endpoints:
+
+```bash
+curl http://localhost:3000/auth/me -H "Authorization: Bearer $TOKEN"
+curl -X POST http://localhost:3000/auth/logout -H "Authorization: Bearer $TOKEN"
+```
+
+`POST /auth/logout` is idempotent: repeating it with the same token still
+answers `200`. Missing, malformed, expired or revoked tokens answer `401`.
+
+`npm run seed:league` also seeds demo identities. **These credentials are
+demo-only and must be replaced before any real deployment.**
+
+| Email | Password | Scope |
+| --- | --- | --- |
+| `admin@liga-metropolitana.olb` | `olb-demo-admin` | `org_admin` on the organization |
+| `norte@liga-metropolitana.olb` | `olb-demo-norte` | `competition_admin` on Zona Norte |
+| `tiburones@liga-metropolitana.olb` | `olb-demo-tiburones` | `team_admin` and `scorer` on the Tiburones team season |
+| `verificador@liga-metropolitana.olb` | `olb-demo-verificador` | `verifier` on Zona Norte |
+
+The seed is idempotent and creates four users and five memberships (Tiburones
+holds two roles). Override the demo passwords with `SEED_ADMIN_PASSWORD`,
+`SEED_NORTE_PASSWORD`, `SEED_TIBURONES_PASSWORD` and `SEED_VERIFIER_PASSWORD`
+before seeding.
+
+### Admin writes
+
+Reads stay public. Every admin write requires a Bearer token and a membership
+that covers the target row. A missing token answers `401`; a token without the
+needed scope answers `403`; an invalid body answers `400`; an unknown reference
+answers `404`.
+
+| Method | Path | Required scope |
+| --- | --- | --- |
+| POST | `/admin/seasons` | `org_admin` of `organizationId` |
+| POST | `/admin/competitions` | `org_admin` of the season's organization, or `competition_admin` of a competition in that season |
+| POST | `/admin/teams` | `org_admin` of `organizationId` |
+| POST | `/admin/team-seasons` | `org_admin` of the season's organization, or `competition_admin` of `competitionId` |
+| POST | `/admin/players` | `org_admin` of `organizationId` |
+| POST | `/admin/roster-entries` | `team_admin`/`scorer` of the team season, or a competition/organization admin above it |
+| POST | `/admin/games` | `competition_admin` of the competition, or `team_admin`/`scorer` of either team season |
+
+Seasons have one active row per organization: creating an active season
+archives the others. Admin-created ids are server-generated UUIDv7 values; the
+client cannot set or reuse one. Creating a game writes a `scheduled` catalog
+row with `lastSeq = -1` and appends no events. The event log remains the only
+source of truth for a `full` game's state and score.
+
+```bash
+curl -X POST http://localhost:3000/admin/games \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' \
+  -d '{
+    "seasonId": "...",
+    "competitionId": "...",
+    "homeTeamSeasonId": "...",
+    "awayTeamSeasonId": "...",
+    "scheduledStart": "2027-04-10T18:00:00.000Z",
+    "venue": "Parque Central"
+  }'
+```
 
 Appending a pitch:
 
@@ -261,8 +339,9 @@ the table is ordered by winning percentage and then run differential.
 ## Not implemented yet
 
 - Realtime gateway (WebSocket, snapshot + delta, resume from `fromSeq`)
-- Authentication, roles, and per-game write authorization
-- League write/admin endpoints, memberships and statistics
+- Scorer login and per-game write authorization for legacy event/proposal writes
+- Web and scorer login/admin interfaces
+- Statistics beyond the box score and standings
 - Postgres integration tests in CI
 - Docker image
 
@@ -270,7 +349,7 @@ the table is ordered by winning percentage and then run differential.
 
 ```bash
 npm run typecheck
-npm test          # fold rules, lifecycle, HTTP box score/standings and league reads
+npm test          # fold rules, lifecycle, HTTP reads, auth/scopes and admin writes
 ```
 
 ## License
