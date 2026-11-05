@@ -192,6 +192,138 @@ describe("olb-api", () => {
     ).toBe(true);
   });
 
+  it("folds hit by pitch, interference, substitution and suspension over HTTP", async () => {
+    const created = await request(app.getHttpServer())
+      .post("/games")
+      .send({ homeTeam: "Marlins", awayTeam: "Tiburones" })
+      .expect(201);
+    const gameId = created.body.id;
+
+    await request(app.getHttpServer())
+      .post(`/games/${gameId}/start`)
+      .send({
+        rules: {
+          innings: 7,
+          mercy: true,
+          dh: true,
+          pitchLimit: 80,
+          extraInningsPlacedRunner: true,
+        },
+      })
+      .expect(201);
+
+    const playerId = (n: number) =>
+      `0192f3a2-${String(n).padStart(4, "0")}-7000-8000-${String(n).padStart(12, "0")}`;
+    const positions = ["8", "4", "9", "3", "5", "6", "7", "2", "1"];
+    const away = Array.from({ length: 9 }, (_, index) => playerId(401 + index));
+    const home = Array.from({ length: 9 }, (_, index) => playerId(421 + index));
+    const order = (players: string[]) =>
+      players.map((player, index) => ({ player, position: positions[index] }));
+
+    const append = (body: unknown) =>
+      request(app.getHttpServer()).post(`/games/${gameId}/events`).send(body).expect(201);
+
+    await append({
+      type: "lineup.set",
+      source: "human",
+      actor: { kind: "user", id: "usr_01HX" },
+      payload: { team: "away", battingOrder: order(away), pitcher: away[8], dh: true },
+    });
+    await append({
+      type: "lineup.set",
+      source: "human",
+      actor: { kind: "user", id: "usr_01HX" },
+      payload: { team: "home", battingOrder: order(home), pitcher: home[8], dh: true },
+    });
+
+    const interferenceBatter = playerId(441);
+    await append({
+      type: "pitch",
+      source: "human",
+      actor: { kind: "user", id: "usr_01HX" },
+      payload: {
+        pitchNo: 1,
+        batter: away[0],
+        pitcher: home[8],
+        count: { balls: 0, strikes: 0 },
+        call: "H",
+      },
+    });
+    await append({
+      type: "interference",
+      source: "human",
+      actor: { kind: "user", id: "usr_01HX" },
+      payload: { batter: interferenceBatter, kind: "catcher", description: "Catcher's interference" },
+    });
+
+    const replacement = playerId(442);
+    await append({
+      type: "substitution",
+      source: "human",
+      actor: { kind: "user", id: "usr_01HX" },
+      payload: {
+        team: "away",
+        playerIn: replacement,
+        playerOut: away[0],
+        position: "7",
+        battingSlot: 1,
+        reason: "reentry",
+        reentry: true,
+      },
+    });
+    await append({
+      type: "game.suspend",
+      source: "human",
+      actor: { kind: "user", id: "usr_01HX" },
+      payload: { reason: "rain", at: "2026-04-11T23:48:00.000Z" },
+    });
+
+    const suspended = await request(app.getHttpServer())
+      .get(`/games/${gameId}/state`)
+      .expect(200);
+    expect(suspended.body.status).toBe("suspended");
+
+    await append({
+      type: "game.resume",
+      source: "human",
+      actor: { kind: "user", id: "usr_01HX" },
+      payload: { at: "2026-04-12T00:20:00.000Z" },
+    });
+
+    const state = await request(app.getHttpServer())
+      .get(`/games/${gameId}/state`)
+      .expect(200);
+
+    expect(state.body).toMatchObject({
+      status: "live",
+      count: { balls: 0, strikes: 0 },
+      batter: replacement,
+      pitcher: home[8],
+      pitchCounts: { [home[8]]: 1 },
+      rules: { innings: 7, mercy: true, dh: true, pitchLimit: 80, extraInningsPlacedRunner: true },
+    });
+    expect(state.body.bases).toEqual({
+      first: interferenceBatter,
+      second: away[0],
+      third: null,
+    });
+    expect(state.body.lineups.away).toMatchObject({ pitcher: away[8], dh: true });
+    expect(state.body.lineups.home).toMatchObject({ pitcher: home[8], dh: true });
+    expect(state.body.lineups.away.battingOrder[0]).toEqual({
+      player: replacement,
+      position: "7",
+    });
+
+    expect(
+      isRealtimeMessage({
+        type: "snapshot",
+        gameId,
+        seq: state.body.lastSeq,
+        state: state.body,
+      }),
+    ).toBe(true);
+  });
+
   it("resumes the log from a sequence number", async () => {
     const gameId = await createGame();
     const pitch = {

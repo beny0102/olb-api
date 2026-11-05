@@ -146,6 +146,7 @@ export class GamesService {
     if (venue !== null) payload.venue = venue;
     if (input.fieldCondition !== undefined) payload.fieldCondition = input.fieldCondition;
     if (input.umpires !== undefined) payload.umpires = input.umpires;
+    if (input.rules !== undefined) payload.rules = input.rules;
 
     await this.store.append(id, (seq) => {
       // The sequence number is assigned inside the store's critical section,

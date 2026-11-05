@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Event } from "@olb/contract/types";
-import { foldBoxScore, foldEvents } from "../src/domain/fold.js";
+import { foldBoxScore, foldEvents, initialState } from "../src/domain/fold.js";
 
 const gameId = "0192f3a0-5b11-7a02-8f3c-1c9d2e3f4a50";
 const batter = "0192f3a2-0001-7000-8000-000000000001";
@@ -429,3 +429,209 @@ describe("foldBoxScore padding", () => {
     expect(box.home.linescore).toEqual([null, null, null, null, null, null, null, null, null]);
   });
 });
+
+const POSITIONS = ["8", "4", "9", "3", "5", "6", "7", "2", "1"] as const;
+const battingOrder = (first: number) =>
+  Array.from({ length: 9 }, (_, index) => player(first + index));
+
+const lineup = (
+  seq: number,
+  team: "home" | "away",
+  order: string[],
+  pitcher: string,
+  dh = false,
+) =>
+  event(seq, "lineup.set", {
+    team,
+    battingOrder: order.map((entry, index) => ({
+      player: entry,
+      position: POSITIONS[index],
+    })),
+    pitcher,
+    dh,
+  });
+
+function runsLoaded(seq: number, first: string, second: string, third: string): Event[] {
+  return [
+    runner(seq, { player: third, from: "1", to: "3", kind: "steal", out: false }),
+    runner(seq + 1, { player: second, from: "1", to: "2", kind: "steal", out: false }),
+    runner(seq + 2, { player: first, from: "1", to: "1", kind: "steal", out: false }),
+  ];
+}
+
+describe("event schema 0.2 fold", () => {
+  it("scores a hit by pitch with the bases loaded", () => {
+    const first = player(71);
+    const second = player(72);
+    const third = player(73);
+    const state = foldEvents([
+      start(),
+      ...runsLoaded(1, first, second, third),
+      pitch(4, "H"),
+    ]);
+
+    expect(state.score).toEqual({ home: 0, away: 1 });
+    expect(state.bases).toEqual({ first: batter, second: first, third: second });
+    expect(state.count).toEqual({ balls: 0, strikes: 0 });
+    expect(state.pitchCounts[pitcher]).toBe(1);
+  });
+
+  it("treats an intentional ball as a ball", () => {
+    const state = foldEvents([start(), pitch(1, "I"), pitch(2, "I"), pitch(3, "I")]);
+    expect(state.count).toEqual({ balls: 3, strikes: 0 });
+
+    const walk = foldEvents([start(), pitch(1, "I"), pitch(2, "I"), pitch(3, "I"), pitch(4, "I")]);
+    expect(walk.bases.first).toBe(batter);
+    expect(walk.count).toEqual({ balls: 0, strikes: 0 });
+  });
+
+  it("replaces the batter and the pitcher on substitution", () => {
+    const away = battingOrder(100);
+    const home = battingOrder(200);
+    const newBatter = player(300);
+    const newPitcher = player(301);
+
+    const state = foldEvents([
+      start(),
+      lineup(1, "away", away, away[8]!, true),
+      lineup(2, "home", home, home[8]!, true),
+    ]);
+    expect(state.batter).toBe(away[0]);
+    expect(state.pitcher).toBe(home[8]);
+    expect(state.lineups?.away.dh).toBe(true);
+    expect(state.lineups?.home.dh).toBe(true);
+
+    const afterBatter = foldEvents([
+      start(),
+      lineup(1, "away", away, away[8]!, true),
+      lineup(2, "home", home, home[8]!, true),
+      event(3, "substitution", {
+        team: "away",
+        playerIn: newBatter,
+        playerOut: away[0],
+        position: "7",
+        battingSlot: 1,
+        reason: "reentry",
+        reentry: true,
+      }),
+    ]);
+    expect(afterBatter.batter).toBe(newBatter);
+    expect(afterBatter.lineups?.away.battingOrder[0]).toEqual({
+      player: newBatter,
+      position: "7",
+    });
+
+    const afterPitcher = foldEvents([
+      start(),
+      lineup(1, "away", away, away[8]!, true),
+      lineup(2, "home", home, home[8]!, true),
+      event(3, "substitution", {
+        team: "home",
+        playerIn: newPitcher,
+        playerOut: home[8]!,
+        position: "1",
+        battingSlot: 9,
+        reason: "courtesy",
+      }),
+    ]);
+    expect(afterPitcher.pitcher).toBe(newPitcher);
+    expect(afterPitcher.lineups?.home.pitcher).toBe(newPitcher);
+    expect(afterPitcher.lineups?.home.battingOrder[8]?.player).toBe(newPitcher);
+  });
+
+  it("suspends and resumes the game", () => {
+    const suspended = foldEvents([
+      start(),
+      event(1, "game.suspend", { reason: "rain", at: "2026-04-11T23:48:00.000Z" }),
+    ]);
+    expect(suspended.status).toBe("suspended");
+
+    const resumed = foldEvents([
+      start(),
+      event(1, "game.suspend", { reason: "rain" }),
+      event(2, "game.resume", { at: "2026-04-12T00:20:00.000Z" }),
+    ]);
+    expect(resumed.status).toBe("live");
+    expect(resumed.lastSeq).toBe(2);
+  });
+
+  it("places an automatic runner on second", () => {
+    const placed = player(74);
+    const state = foldEvents([
+      start(),
+      runner(1, {
+        player: placed,
+        from: "bench",
+        to: "2",
+        kind: "placed",
+        out: false,
+      }),
+    ]);
+
+    expect(state.bases).toEqual({ first: null, second: placed, third: null });
+    expect(state.outs).toBe(0);
+    expect(state.count).toEqual({ balls: 0, strikes: 0 });
+  });
+
+  it("forces a run home on interference", () => {
+    const first = player(75);
+    const second = player(76);
+    const third = player(77);
+    const state = foldEvents([
+      start(),
+      ...runsLoaded(1, first, second, third),
+      event(4, "interference", {
+        batter,
+        kind: "catcher",
+        fielder: player(78),
+        description: "Catcher's interference",
+      }),
+    ]);
+
+    expect(state.score).toEqual({ home: 0, away: 1 });
+    expect(state.bases).toEqual({ first: batter, second: first, third: second });
+    expect(state.count).toEqual({ balls: 0, strikes: 0 });
+  });
+
+  it("leaves the projection untouched on ejection", () => {
+    const before = foldEvents([start(), pitch(1, "B")]);
+    const after = foldEvents([
+      start(),
+      pitch(1, "B"),
+      event(2, "ejection", {
+        person: player(79),
+        role: "manager",
+        reason: "Arguing balls and strikes",
+      }),
+    ]);
+
+    expect({ ...after, lastSeq: before.lastSeq }).toEqual(before);
+    expect(after.lastSeq).toBe(2);
+  });
+
+  it("folds an old log to the same snapshot", () => {
+    const state = foldEvents([
+      start(0),
+      pitch(1, "B"),
+      pitch(2, "S"),
+      event(3, "ball_in_play", {
+        batter,
+        code: "S8",
+        runsBattedIn: 0,
+        runnersAdvanced: [{ player: batter, from: "B", to: "1" }],
+      }),
+      event(4, "inning.end", { inning: 1, half: "top", runsScored: 0, outs: 3 }),
+    ]);
+
+    expect(state).toEqual({
+      ...initialState,
+      status: "live",
+      half: "bottom",
+      bases: { first: null, second: null, third: null },
+      battingTeam: "home",
+      lastSeq: 4,
+      pitchCounts: { [pitcher]: 2 },
+    });
+  });
+});
+

@@ -1,8 +1,21 @@
-import type { Event } from "@olb/contract/types";
+import type { Event, FieldingPosition, RulesProfile } from "@olb/contract/types";
 
 export type GameStatus = "scheduled" | "live" | "final" | "suspended" | "forfeit";
 export type HalfInning = "top" | "bottom";
 export type TeamSide = "home" | "away";
+
+export interface LineupSlot {
+  player: string;
+  position: FieldingPosition;
+}
+
+export interface LineupState {
+  battingOrder: LineupSlot[];
+  pitcher?: string;
+  dh?: boolean;
+}
+
+export type Lineups = { home: LineupState; away: LineupState };
 
 type Bases = GameState["bases"];
 type BaseKey = keyof Bases;
@@ -21,6 +34,11 @@ export interface GameState {
   score: { home: number; away: number };
   battingTeam: TeamSide;
   lastSeq: number;
+  lineups: Lineups | null;
+  batter: string | null;
+  pitcher: string | null;
+  pitchCounts: Record<string, number>;
+  rules: RulesProfile | null;
 }
 
 export const initialState: GameState = {
@@ -33,6 +51,11 @@ export const initialState: GameState = {
   score: { home: 0, away: 0 },
   battingTeam: "away",
   lastSeq: 0,
+  lineups: null,
+  batter: null,
+  pitcher: null,
+  pitchCounts: {},
+  rules: null,
 };
 
 const cleanCount = { balls: 0, strikes: 0 };
@@ -44,6 +67,39 @@ function baseKey(base: "1" | "2" | "3"): BaseKey {
 
 function otherSide(side: TeamSide): TeamSide {
   return side === "home" ? "away" : "home";
+}
+
+function emptyLineup(): LineupState {
+  return { battingOrder: [] };
+}
+
+/**
+ * Keeps the exposed `lineups` object complete: the contract requires both
+ * sides once the field is present, and a side whose lineup has not arrived
+ * yet is represented by an empty batting order rather than invented players.
+ */
+function withLineup(
+  lineups: Lineups | null,
+  side: TeamSide,
+  lineup: LineupState,
+): Lineups {
+  const next: Lineups = {
+    home: lineups?.home ?? emptyLineup(),
+    away: lineups?.away ?? emptyLineup(),
+  };
+  next[side] = lineup;
+  return next;
+}
+
+function battingPointer(
+  lineups: Lineups | null,
+  battingTeam: TeamSide,
+): { batter: string | null; pitcher: string | null } {
+  if (!lineups) return { batter: null, pitcher: null };
+  return {
+    batter: lineups[battingTeam].battingOrder[0]?.player ?? null,
+    pitcher: lineups[otherSide(battingTeam)].pitcher ?? null,
+  };
 }
 
 /**
@@ -100,20 +156,32 @@ export function applyEvent(state: GameState, event: Event): GameState {
         bases: { ...emptyBases },
         score: { home: 0, away: 0 },
         battingTeam: "away",
+        lineups: null,
+        batter: null,
+        pitcher: null,
+        pitchCounts: {},
+        rules: event.payload.rules ?? null,
       };
 
     case "pitch": {
-      const { call, batter } = event.payload;
+      const { call, batter, pitcher } = event.payload;
       const count = { ...state.count };
       const side = state.battingTeam;
+      const pitchBase: GameState = {
+        ...base,
+        pitchCounts: {
+          ...state.pitchCounts,
+          [pitcher]: (state.pitchCounts[pitcher] ?? 0) + 1,
+        },
+      };
 
-      // B and P are balls; a fourth one is a walk, not a stored count of 4.
-      if (call === "B" || call === "P") {
+      // B, P and I are balls; a fourth one is a walk, not a stored count of 4.
+      if (call === "B" || call === "P" || call === "I") {
         count.balls += 1;
         if (count.balls >= 4) {
           const advance = forcedAdvance(state.bases, batter);
           return {
-            ...base,
+            ...pitchBase,
             count: { ...cleanCount },
             bases: advance.bases,
             score: advance.runScored
@@ -121,7 +189,22 @@ export function applyEvent(state: GameState, event: Event): GameState {
               : state.score,
           };
         }
-        return { ...base, count };
+        return { ...pitchBase, count };
+      }
+
+      // H is a hit by pitch: the batter is awarded first base and only the
+      // runners it forces advance, exactly as on a walk. The plate appearance
+      // ends and the count resets.
+      if (call === "H") {
+        const advance = forcedAdvance(state.bases, batter);
+        return {
+          ...pitchBase,
+          count: { ...cleanCount },
+          bases: advance.bases,
+          score: advance.runScored
+            ? { ...state.score, [side]: state.score[side] + 1 }
+            : state.score,
+        };
       }
 
       // C, S and Q are strikes; a third one is a strikeout.
@@ -129,34 +212,37 @@ export function applyEvent(state: GameState, event: Event): GameState {
         count.strikes += 1;
         if (count.strikes >= 3) {
           return {
-            ...base,
+            ...pitchBase,
             outs: Math.min(state.outs + 1, 2),
             count: { ...cleanCount },
           };
         }
-        return { ...base, count };
+        return { ...pitchBase, count };
       }
 
       // A foul never produces a third strike.
       if (call === "F") {
-        return { ...base, count: { balls: count.balls, strikes: Math.min(count.strikes + 1, 2) } };
+        return {
+          ...pitchBase,
+          count: { balls: count.balls, strikes: Math.min(count.strikes + 1, 2) },
+        };
       }
 
       // A foul tip with two strikes is a strikeout; otherwise it is a strike.
       if (call === "T") {
         if (state.count.strikes >= 2) {
           return {
-            ...base,
+            ...pitchBase,
             outs: Math.min(state.outs + 1, 2),
             count: { ...cleanCount },
           };
         }
-        return { ...base, count: { balls: count.balls, strikes: count.strikes + 1 } };
+        return { ...pitchBase, count: { balls: count.balls, strikes: count.strikes + 1 } };
       }
 
       // X announces a ball in play; the following `ball_in_play` resets the
       // count, so X itself only advances the sequence number.
-      return base;
+      return pitchBase;
     }
 
     case "ball_in_play": {
@@ -201,14 +287,20 @@ export function applyEvent(state: GameState, event: Event): GameState {
     }
 
     case "runner": {
-      const { player, from, to, out } = event.payload;
+      const { player, from, to, kind, out } = event.payload;
       const bases: Bases = { ...state.bases };
-      const key = baseKey(from);
       const side = state.battingTeam;
       let score = state.score;
       let outs = state.outs;
 
-      bases[key] = null;
+      // An automatic extra-inning runner is placed directly on a base. There
+      // is no runner leaving another base, no pitch and no plate appearance.
+      if (kind === "placed") {
+        if (to !== "H") bases[baseKey(to)] = player;
+        return { ...base, bases };
+      }
+
+      if (from !== "bench") bases[baseKey(from)] = null;
       if (out) {
         outs = Math.min(outs + 1, 2);
       } else if (to === "H") {
@@ -224,6 +316,7 @@ export function applyEvent(state: GameState, event: Event): GameState {
       // The human ends the half. Three outs alone never advance it.
       const half: HalfInning = state.half === "top" ? "bottom" : "top";
       const inning = state.half === "bottom" ? state.inning + 1 : state.inning;
+      const battingTeam = otherSide(state.battingTeam);
       return {
         ...base,
         inning,
@@ -231,7 +324,8 @@ export function applyEvent(state: GameState, event: Event): GameState {
         outs: 0,
         count: { ...cleanCount },
         bases: { ...emptyBases },
-        battingTeam: otherSide(state.battingTeam),
+        battingTeam,
+        ...battingPointer(state.lineups, battingTeam),
       };
     }
 
@@ -242,8 +336,72 @@ export function applyEvent(state: GameState, event: Event): GameState {
       return { ...base, status, score: { ...event.payload.finalScore } };
     }
 
-    case "lineup.set":
-    case "substitution":
+    case "lineup.set": {
+      const { team, battingOrder, pitcher, dh } = event.payload;
+      const lineup: LineupState = {
+        battingOrder: battingOrder.map((slot) => ({
+          player: slot.player,
+          position: slot.position,
+        })),
+      };
+      if (pitcher !== undefined) lineup.pitcher = pitcher;
+      if (dh !== undefined) lineup.dh = dh;
+
+      const lineups = withLineup(state.lineups, team, lineup);
+      return { ...base, lineups, ...battingPointer(lineups, state.battingTeam) };
+    }
+
+    case "substitution": {
+      const { team, playerIn, playerOut, position, battingSlot } = event.payload;
+      const current = state.lineups?.[team];
+      // Without a batting order there is nothing to replace. The event stays
+      // in the log for audit, but the fold does not invent a lineup slot.
+      if (!current) return base;
+
+      const found = current.battingOrder.findIndex((slot) => slot.player === playerOut);
+      const index = found >= 0 ? found : battingSlot - 1;
+      if (index < 0 || index >= current.battingOrder.length) return base;
+
+      const battingOrder = current.battingOrder.map((slot, slotIndex) =>
+        slotIndex === index ? { player: playerIn, position } : slot,
+      );
+      const lineup: LineupState = { ...current, battingOrder };
+      if (position === "1") lineup.pitcher = playerIn;
+
+      const lineups = withLineup(state.lineups, team, lineup);
+      const batter = state.batter === playerOut ? playerIn : state.batter;
+      const pitcher =
+        position === "1" && team === otherSide(state.battingTeam)
+          ? playerIn
+          : state.pitcher;
+
+      return { ...base, lineups, batter, pitcher };
+    }
+
+    case "interference": {
+      const side = state.battingTeam;
+      const advance = forcedAdvance(state.bases, event.payload.batter);
+      return {
+        ...base,
+        count: { ...cleanCount },
+        bases: advance.bases,
+        score: advance.runScored
+          ? { ...state.score, [side]: state.score[side] + 1 }
+          : state.score,
+      };
+    }
+
+    case "game.suspend":
+      return { ...base, status: "suspended" };
+
+    case "game.resume":
+      return { ...base, status: "live" };
+
+    case "ejection":
+      // Audit only: the person left the game, but the projection has no
+      // person registry to remove them from.
+      return base;
+
     case "discrepancy":
     case "amendment":
     case "note":
