@@ -12,38 +12,6 @@ import type {
   ProposalStatus,
 } from "./store.js";
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS games (
-  id uuid PRIMARY KEY,
-  home_team text NOT NULL,
-  away_team text NOT NULL,
-  scheduled_start timestamptz,
-  venue text,
-  created_at timestamptz NOT NULL,
-  seq integer NOT NULL DEFAULT -1
-);
-
-CREATE TABLE IF NOT EXISTS events (
-  game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
-  seq integer NOT NULL,
-  body jsonb NOT NULL,
-  PRIMARY KEY (game_id, seq)
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS events_event_id_unique ON events ((body->>'id'));
-
-CREATE TABLE IF NOT EXISTS proposals (
-  id uuid PRIMARY KEY,
-  game_id uuid NOT NULL REFERENCES games(id) ON DELETE CASCADE,
-  created_at timestamptz NOT NULL,
-  author text NOT NULL,
-  status text NOT NULL,
-  payload jsonb NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS proposals_game_status ON proposals (game_id, status);
-`;
-
 interface GameRow {
   id: string;
   home_team: string;
@@ -90,23 +58,14 @@ function toProposal(row: ProposalRow): ProposalRecord {
  * Postgres store. One writer per game is enforced by `SELECT ... FOR UPDATE`
  * on the games row, which is also the only place the next sequence number is
  * computed. Two API replicas can therefore append to the same game safely.
+ *
+ * The pool and the schema are owned by the application: migrations run once
+ * at startup, never from this store.
  */
 export class PostgresEventStore implements EventStore {
   readonly kind = "postgres" as const;
 
-  private readonly pool: pg.Pool;
-
-  constructor(connectionString: string) {
-    this.pool = new pg.Pool({
-      connectionString,
-      max: 10,
-      ssl: process.env.PGSSL === "true" ? { rejectUnauthorized: false } : undefined,
-    });
-  }
-
-  async init(): Promise<void> {
-    await this.pool.query(SCHEMA);
-  }
+  constructor(private readonly pool: pg.Pool) {}
 
   async createGame(input: CreateGameInput): Promise<GameRecord> {
     const { rows } = await this.pool.query<GameRow>(
