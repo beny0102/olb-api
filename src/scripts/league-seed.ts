@@ -21,7 +21,124 @@ const SEED_CREATED_AT = "2026-01-01T00:00:00.000Z";
 const SEED_SUMMARY_AT = "2026-03-30T00:00:00.000Z";
 const SEASON_START = "2026-03-01";
 
-const POSITIONS = ["C", "1B", "2B", "3B", "SS", "LF", "CF", "RF", "DH", "P"] as const;
+const POSITIONS = [
+  "C",
+  "C",
+  "1B",
+  "2B",
+  "3B",
+  "SS",
+  "LF",
+  "CF",
+  "RF",
+  "DH",
+  "P",
+  "P",
+  "P",
+  "P",
+  "1B",
+  "2B",
+  "SS",
+  "LF",
+] as const;
+
+/** Rotated per club so the four 18-man rosters do not share one number set. */
+const JERSEYS = [
+  "2",
+  "7",
+  "11",
+  "13",
+  "17",
+  "21",
+  "24",
+  "27",
+  "31",
+  "33",
+  "38",
+  "41",
+  "44",
+  "48",
+  "51",
+  "55",
+  "59",
+  "62",
+] as const;
+
+/** One distinct surname per player: four clubs of 18, no repeats. */
+const SURNAMES = [
+  "Aguilar",
+  "Bermúdez",
+  "Castillo",
+  "Domínguez",
+  "Escobar",
+  "Fuentes",
+  "Guerrero",
+  "Herrera",
+  "Ibarra",
+  "Jiménez",
+  "Lara",
+  "Medina",
+  "Navarro",
+  "Ortiz",
+  "Paredes",
+  "Quiñones",
+  "Ramírez",
+  "Salazar",
+  "Tapia",
+  "Urbina",
+  "Valdez",
+  "Zambrano",
+  "Acosta",
+  "Barrera",
+  "Cabrera",
+  "Delgado",
+  "Espinoza",
+  "Figueroa",
+  "Galván",
+  "Hernández",
+  "Islas",
+  "Juárez",
+  "Lozano",
+  "Maldonado",
+  "Núñez",
+  "Ochoa",
+  "Padilla",
+  "Quintero",
+  "Rojas",
+  "Sandoval",
+  "Trejo",
+  "Uribe",
+  "Vargas",
+  "Zamora",
+  "Arreola",
+  "Bustamante",
+  "Cárdenas",
+  "Duarte",
+  "Estrada",
+  "Fierro",
+  "Gutiérrez",
+  "Huerta",
+  "Infante",
+  "Jaramillo",
+  "Leal",
+  "Meza",
+  "Nieves",
+  "Orozco",
+  "Pacheco",
+  "Quiroz",
+  "Reyes",
+  "Serrano",
+  "Torres",
+  "Ulloa",
+  "Villalobos",
+  "Yáñez",
+  "Zepeda",
+  "Alvarado",
+  "Beltrán",
+  "Cuevas",
+  "Del Río",
+  "Enríquez",
+] as const;
 
 const FIRST_NAMES = [
   "Alejandro",
@@ -49,7 +166,6 @@ interface TeamSeed {
   name: string;
   slug: string;
   abbreviation: string;
-  surname: string;
   competitionIndex: 0 | 1;
   venue: string;
 }
@@ -60,7 +176,6 @@ const TEAMS: TeamSeed[] = [
     name: "Tiburones",
     slug: "tiburones",
     abbreviation: "TIB",
-    surname: "Aguilar",
     competitionIndex: 0,
     venue: "Estadio Metropolitano",
   },
@@ -69,7 +184,6 @@ const TEAMS: TeamSeed[] = [
     name: "Faros",
     slug: "faros",
     abbreviation: "FAR",
-    surname: "Bermúdez",
     competitionIndex: 0,
     venue: "Estadio Metropolitano",
   },
@@ -78,7 +192,6 @@ const TEAMS: TeamSeed[] = [
     name: "Mantarrayos",
     slug: "mantarrayos",
     abbreviation: "MAN",
-    surname: "Castillo",
     competitionIndex: 1,
     venue: "Parque del Sur",
   },
@@ -87,7 +200,6 @@ const TEAMS: TeamSeed[] = [
     name: "Corsarios",
     slug: "corsarios",
     abbreviation: "COR",
-    surname: "Domínguez",
     competitionIndex: 1,
     venue: "Parque del Sur",
   },
@@ -224,12 +336,13 @@ export async function seedLeague(store: LeagueStore): Promise<void> {
     for (let playerIndex = 0; playerIndex < FIRST_NAMES.length; playerIndex += 1) {
       const playerId = id(100 + teamIndex * FIRST_NAMES.length + playerIndex);
       const firstName = FIRST_NAMES[playerIndex]!;
+      const lastName = SURNAMES[teamIndex * FIRST_NAMES.length + playerIndex]!;
 
       await store.upsertPlayer({
         id: playerId,
         organizationId: SEED_ORGANIZATION_ID,
         firstName,
-        lastName: team.surname,
+        lastName,
         createdAt: SEED_CREATED_AT,
       });
 
@@ -237,8 +350,8 @@ export async function seedLeague(store: LeagueStore): Promise<void> {
         id: id(300 + teamIndex * FIRST_NAMES.length + playerIndex),
         teamSeasonId,
         playerId,
-        jersey: String(playerIndex + 1),
-        primaryPosition: POSITIONS[playerIndex % POSITIONS.length]!,
+        jersey: JERSEYS[(teamIndex + playerIndex) % JERSEYS.length]!,
+        primaryPosition: POSITIONS[playerIndex]!,
         eligibilityStart: SEASON_START,
         eligibilityEnd: null,
         status: "active",

@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, Inject, Injectable } from "@nestjs/common";
+import {
+  BadRequestException,
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from "@nestjs/common";
 import { parseEvent } from "@olb/contract";
 import type { Event } from "@olb/contract/types";
 import {
@@ -8,16 +14,23 @@ import {
   type GameState,
 } from "../domain/fold.js";
 import { computeStandings, type Standings } from "../domain/standings.js";
-import { uuidv7 } from "../domain/uuid7.js";
+import { isUuidV7, uuidv7 } from "../domain/uuid7.js";
 import { GameNotFoundError } from "../store/errors.js";
 import { EVENT_STORE, type EventStore, type GameRecord } from "../store/store.js";
 
 const MAX_NAME = 120;
 const MAX_VENUE = 200;
-const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const ISO_TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
 const END_REASONS = ["completed", "forfeit", "suspended", "rain", "darkness", "other"] as const;
+
+/**
+ * A path id that is not a UUIDv7 cannot exist, so it is a 404 rather than a
+ * Postgres cast error. Body ids keep their 400 validation in `gameId`.
+ */
+function assertGameId(id: string): void {
+  if (!isUuidV7(id)) throw new NotFoundException(`game ${id} not found`);
+}
 
 function assertObject(body: unknown): Record<string, unknown> {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -69,7 +82,7 @@ function optionalVenue(body: Record<string, unknown>, key = "venue"): string | n
 function gameId(body: Record<string, unknown>): string {
   const value = body.id;
   if (value === undefined || value === null) return uuidv7();
-  if (typeof value !== "string" || !UUID_V7.test(value)) {
+  if (!isUuidV7(value)) {
     throw new BadRequestException("id must be a lowercase UUIDv7");
   }
   return value;
@@ -124,6 +137,7 @@ export class GamesService {
   }
 
   async startGame(id: string, body: unknown): Promise<GameRecord & { state: GameState }> {
+    assertGameId(id);
     const input = assertObject(body ?? {});
     const payload: Record<string, unknown> = {
       startedAt: optionalTimestamp(input, "startedAt") ?? new Date().toISOString(),
@@ -149,6 +163,7 @@ export class GamesService {
   }
 
   async finishGame(id: string, body: unknown): Promise<GameRecord & { state: GameState }> {
+    assertGameId(id);
     const events = await this.listEvents(id, 0);
     const state = foldEvents(events);
     if (state.status === "final" || state.status === "forfeit") {
@@ -183,6 +198,7 @@ export class GamesService {
   }
 
   async getBoxScore(id: string): Promise<GameBoxScore> {
+    assertGameId(id);
     const events = await this.listEvents(id, 0);
     return foldBoxScore(id, events);
   }
@@ -200,23 +216,27 @@ export class GamesService {
   }
 
   async getGame(id: string): Promise<GameRecord> {
+    assertGameId(id);
     const game = await this.store.getGame(id);
     if (!game) throw new GameNotFoundError(id);
     return this.view(game);
   }
 
   async getState(id: string): Promise<GameState> {
+    assertGameId(id);
     await this.getGame(id);
     const events = await this.store.listEvents(id, 0);
     return foldEvents(events);
   }
 
   async listEvents(id: string, fromSeq: number): Promise<Event[]> {
+    assertGameId(id);
     await this.getGame(id);
     return this.store.listEvents(id, fromSeq);
   }
 
   async appendEvent(id: string, body: unknown): Promise<Event> {
+    assertGameId(id);
     const input = assertObject(body);
 
     // A client-generated id makes a retried POST idempotent: the stored event

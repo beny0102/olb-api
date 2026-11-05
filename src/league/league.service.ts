@@ -1,6 +1,7 @@
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import type { Event } from "@olb/contract/types";
 import { foldEvents, type GameStatus } from "../domain/fold.js";
+import { isUuidV7 } from "../domain/uuid7.js";
 import {
   LEAGUE_STORE,
   type CompetitionRecord,
@@ -58,6 +59,14 @@ function pct(wins: number, losses: number): number {
 }
 
 /**
+ * A path id that is not a UUIDv7 cannot name a stored league row, so it is a
+ * 404 instead of a Postgres cast error.
+ */
+function assertLeagueId(id: string, resource: string): void {
+  if (!isUuidV7(id)) throw new NotFoundException(`${resource} ${id} not found`);
+}
+
+/**
  * Season reads over the league catalog. A `full` game is projected from its
  * event log; `summary` and `external` games read the stored score, and a game
  * with neither is still scheduled. Standings group by competition and count
@@ -86,27 +95,32 @@ export class LeagueService {
   }
 
   async getSeason(id: string): Promise<SeasonOverview> {
+    assertLeagueId(id, "season");
     const season = await this.requireSeason(id);
     return { season, competitions: await this.league.listCompetitions(season.id) };
   }
 
   async listCompetitions(seasonId: string): Promise<CompetitionRecord[]> {
+    assertLeagueId(seasonId, "season");
     const season = await this.requireSeason(seasonId);
     return this.league.listCompetitions(season.id);
   }
 
   async listTeams(competitionId: string): Promise<TeamSeasonRecord[]> {
+    assertLeagueId(competitionId, "competition");
     const competition = await this.requireCompetition(competitionId);
     return this.league.listTeams(competition.id);
   }
 
   async getTeamSeason(id: string): Promise<TeamSeasonView> {
+    assertLeagueId(id, "team season");
     const teamSeason = await this.league.getTeamSeason(id);
     if (!teamSeason) throw new NotFoundException(`team season ${id} not found`);
     return { teamSeason, roster: await this.league.listRoster(teamSeason.id) };
   }
 
   async listGames(seasonId: string, competitionId?: string): Promise<LeagueGameView[]> {
+    assertLeagueId(seasonId, "season");
     const season = await this.requireSeason(seasonId);
     await this.optionalCompetition(season.id, competitionId);
     const games = await this.league.listGames(season.id, competitionId);
@@ -114,6 +128,7 @@ export class LeagueService {
   }
 
   async getGame(id: string): Promise<LeagueGameDetail> {
+    assertLeagueId(id, "game");
     const game = await this.league.getGame(id);
     if (!game) throw new NotFoundException(`game ${id} not found`);
     return {
@@ -123,6 +138,7 @@ export class LeagueService {
   }
 
   async getStandings(seasonId: string, competitionId?: string): Promise<StandingGroup[]> {
+    assertLeagueId(seasonId, "season");
     const season = await this.requireSeason(seasonId);
     const selected = await this.optionalCompetition(season.id, competitionId);
     const competitions = selected
@@ -233,6 +249,7 @@ export class LeagueService {
     competitionId?: string,
   ): Promise<CompetitionRecord | undefined> {
     if (competitionId === undefined) return undefined;
+    assertLeagueId(competitionId, "competition");
     const competition = await this.requireCompetition(competitionId);
     if (competition.seasonId !== seasonId) {
       throw new NotFoundException(`competition ${competitionId} not found in season ${seasonId}`);

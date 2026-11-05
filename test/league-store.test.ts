@@ -72,9 +72,26 @@ describe("league store (memory)", () => {
   it("reads an 18-player roster ordered by jersey", async () => {
     const roster = await store.listRoster(SEED_TEAM_SEASON_IDS[0]);
     expect(roster).toHaveLength(18);
-    expect(roster.map((row) => row.jersey)).toEqual(
-      Array.from({ length: 18 }, (_, index) => String(index + 1)),
-    );
+    expect(roster.map((row) => row.jersey)).toEqual([
+      "2",
+      "7",
+      "11",
+      "13",
+      "17",
+      "21",
+      "24",
+      "27",
+      "31",
+      "33",
+      "38",
+      "41",
+      "44",
+      "48",
+      "51",
+      "55",
+      "59",
+      "62",
+    ]);
     expect(roster[0]).toMatchObject({
       firstName: "Alejandro",
       lastName: "Aguilar",
@@ -84,6 +101,7 @@ describe("league store (memory)", () => {
     });
     expect(roster.map((row) => row.primaryPosition).slice(0, 10)).toEqual([
       "C",
+      "C",
       "1B",
       "2B",
       "3B",
@@ -92,12 +110,14 @@ describe("league store (memory)", () => {
       "CF",
       "RF",
       "DH",
-      "P",
     ]);
 
     let total = 0;
     for (const teamSeasonId of SEED_TEAM_SEASON_IDS) {
-      total += (await store.listRoster(teamSeasonId)).length;
+      const club = await store.listRoster(teamSeasonId);
+      total += club.length;
+      expect(new Set(club.map((row) => row.lastName)).size).toBeGreaterThanOrEqual(10);
+      expect(club.filter((row) => row.primaryPosition === "P")).toHaveLength(4);
     }
     expect(total).toBe(72);
   });
@@ -168,12 +188,19 @@ describe("league store (memory)", () => {
     ).flat();
     const rosters = await Promise.all(teams.map((row) => store.listRoster(row.id)));
     const games = await store.listGames(SEED_SEASON_ID);
+    const roster = rosters.flat();
 
     expect(organizations).toHaveLength(1);
     expect(seasons).toHaveLength(1);
     expect(competitions).toHaveLength(2);
     expect(teams).toHaveLength(4);
-    expect(rosters.flat()).toHaveLength(72);
+    expect(roster).toHaveLength(72);
+    expect(new Set(roster.map((row) => row.playerId)).size).toBe(72);
+    for (const rows of rosters) {
+      expect(rows).toHaveLength(18);
+      expect(new Set(rows.map((row) => row.lastName)).size).toBeGreaterThanOrEqual(10);
+      expect(rows.filter((row) => row.primaryPosition === "P")).toHaveLength(4);
+    }
     expect(games).toHaveLength(8);
   });
 });

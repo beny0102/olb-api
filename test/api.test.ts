@@ -314,6 +314,11 @@ describe("olb-api", () => {
     expect(state.body.count).toEqual({ balls: 0, strikes: 0 });
     expect(state.body.lastSeq).toBe(original.body.seq + 1);
   });
+
+  it("answers 404 for an invalid game id instead of a storage error", async () => {
+    await request(app.getHttpServer()).get("/games/not-a-uuid").expect(404);
+    await request(app.getHttpServer()).get("/games/not-a-uuid/state").expect(404);
+  });
 });
 
 function pitch(call: "S" | "B") {

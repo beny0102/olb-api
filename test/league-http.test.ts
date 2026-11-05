@@ -107,7 +107,7 @@ describe("league reads over the seeded catalog", () => {
     });
     expect(response.body.roster).toHaveLength(18);
     expect(response.body.roster[0]).toMatchObject({
-      jersey: "1",
+      jersey: "2",
       firstName: "Alejandro",
       lastName: "Aguilar",
       primaryPosition: "C",
@@ -345,5 +345,11 @@ describe("missing league resources", () => {
     await request(app.getHttpServer())
       .get(`/seasons/${SEED_SEASON_ID}/standings?competitionId=${UNKNOWN}`)
       .expect(404);
+  });
+
+  it("answers 404 for invalid ids in the path", async () => {
+    await request(app.getHttpServer()).get("/league-games/not-a-uuid").expect(404);
+    await request(app.getHttpServer()).get("/seasons/not-a-uuid").expect(404);
+    await request(app.getHttpServer()).get("/competitions/not-a-uuid/teams").expect(404);
   });
 });
