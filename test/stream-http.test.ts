@@ -4,12 +4,14 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../src/app.module.js";
 import { GameNotFoundFilter } from "../src/filters/game-not-found.filter.js";
+import { login, seedTestAuth } from "./support/auth.js";
 import { SseClient } from "./support/sse.js";
 
 const UNKNOWN = "0192f3ff-0000-7000-8000-000000000000";
 
 let app: INestApplication;
 let baseUrl: string;
+let token: string;
 
 beforeAll(async () => {
   delete process.env.DATABASE_URL;
@@ -19,21 +21,24 @@ beforeAll(async () => {
   app.useGlobalFilters(new GameNotFoundFilter());
   await app.listen(0);
   baseUrl = await app.getUrl();
+
+  await seedTestAuth(app);
+  token = await login(app);
 });
 
 afterAll(async () => {
   await app.close();
 });
 
+function post(path: string) {
+  return request(app.getHttpServer()).post(path).set("authorization", `Bearer ${token}`);
+}
+
 async function startedGame(): Promise<string> {
-  const created = await request(app.getHttpServer())
-    .post("/games")
+  const created = await post("/games")
     .send({ homeTeam: "Marlins", awayTeam: "Tiburones" })
     .expect(201);
-  await request(app.getHttpServer())
-    .post(`/games/${created.body.id}/start`)
-    .send({})
-    .expect(201);
+  await post(`/games/${created.body.id}/start`).send({}).expect(201);
   return created.body.id;
 }
 
@@ -79,8 +84,7 @@ describe("GET /games/:id/stream", () => {
     await client.ready;
     await client.next();
 
-    await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    await post(`/games/${gameId}/events`)
       .send(pitch("B"))
       .expect(201);
 
@@ -102,8 +106,7 @@ describe("GET /games/:id/stream", () => {
     await client.ready;
     await client.next();
 
-    await request(app.getHttpServer())
-      .post(`/games/${gameId}/finish`)
+    await post(`/games/${gameId}/finish`)
       .send({ reason: "completed" })
       .expect(201);
 

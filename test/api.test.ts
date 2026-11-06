@@ -5,8 +5,10 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../src/app.module.js";
 import { GameNotFoundFilter } from "../src/filters/game-not-found.filter.js";
+import { login, seedTestAuth } from "./support/auth.js";
 
 let app: INestApplication;
+let token: string;
 
 beforeAll(async () => {
   delete process.env.DATABASE_URL;
@@ -15,18 +17,24 @@ beforeAll(async () => {
   app = moduleRef.createNestApplication();
   app.useGlobalFilters(new GameNotFoundFilter());
   await app.init();
+
+  await seedTestAuth(app);
+  token = await login(app);
 });
 
 afterAll(async () => {
   await app.close();
 });
 
+function post(path: string) {
+  return request(app.getHttpServer()).post(path).set("authorization", `Bearer ${token}`);
+}
+
 async function createGame(): Promise<string> {
-  const response = await request(app.getHttpServer())
-    .post("/games")
+  const response = await post("/games")
     .send({ homeTeam: "Marlins", awayTeam: "Tiburones" })
     .expect(201);
-  await request(app.getHttpServer()).post(`/games/${response.body.id}/start`).send({}).expect(201);
+  await post(`/games/${response.body.id}/start`).send({}).expect(201);
   return response.body.id;
 }
 
@@ -37,8 +45,7 @@ describe("olb-api", () => {
   });
 
   it("creates a scheduled game and appends no event", async () => {
-    const response = await request(app.getHttpServer())
-      .post("/games")
+    const response = await post("/games")
       .send({
         homeTeam: "Marlins",
         awayTeam: "Tiburones",
@@ -69,13 +76,11 @@ describe("olb-api", () => {
   });
 
   it("starts a scheduled game with game.start at sequence zero", async () => {
-    const created = await request(app.getHttpServer())
-      .post("/games")
+    const created = await post("/games")
       .send({ homeTeam: "Marlins", awayTeam: "Tiburones", venue: "Estadio Centenario" })
       .expect(201);
 
-    const started = await request(app.getHttpServer())
-      .post(`/games/${created.body.id}/start`)
+    const started = await post(`/games/${created.body.id}/start`)
       .send({ venue: "Estadio Centenario", fieldCondition: "dry" })
       .expect(201);
 
@@ -100,14 +105,13 @@ describe("olb-api", () => {
   });
 
   it("rejects a game without both teams", async () => {
-    await request(app.getHttpServer()).post("/games").send({ homeTeam: "Marlins" }).expect(400);
+    await post("/games").send({ homeTeam: "Marlins" }).expect(400);
   });
 
   it("assigns sequence numbers and rejects an invalid payload", async () => {
     const gameId = await createGame();
 
-    const first = await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    const first = await post(`/games/${gameId}/events`)
       .send({
         type: "pitch",
         source: "human",
@@ -124,8 +128,7 @@ describe("olb-api", () => {
 
     expect(first.body).toMatchObject({ seq: 1, type: "pitch", gameId });
 
-    const second = await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    const second = await post(`/games/${gameId}/events`)
       .send({
         type: "pitch",
         source: "human",
@@ -142,8 +145,7 @@ describe("olb-api", () => {
 
     expect(second.body.seq).toBe(2);
 
-    await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    await post(`/games/${gameId}/events`)
       .send({
         type: "pitch",
         source: "human",
@@ -162,8 +164,7 @@ describe("olb-api", () => {
   it("serves a projection that validates as a realtime snapshot", async () => {
     const gameId = await createGame();
 
-    await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    await post(`/games/${gameId}/events`)
       .send({
         type: "pitch",
         source: "human",
@@ -193,14 +194,12 @@ describe("olb-api", () => {
   });
 
   it("folds hit by pitch, interference, substitution and suspension over HTTP", async () => {
-    const created = await request(app.getHttpServer())
-      .post("/games")
+    const created = await post("/games")
       .send({ homeTeam: "Marlins", awayTeam: "Tiburones" })
       .expect(201);
     const gameId = created.body.id;
 
-    await request(app.getHttpServer())
-      .post(`/games/${gameId}/start`)
+    await post(`/games/${gameId}/start`)
       .send({
         rules: {
           innings: 7,
@@ -221,7 +220,7 @@ describe("olb-api", () => {
       players.map((player, index) => ({ player, position: positions[index] }));
 
     const append = (body: unknown) =>
-      request(app.getHttpServer()).post(`/games/${gameId}/events`).send(body).expect(201);
+      post(`/games/${gameId}/events`).send(body).expect(201);
 
     await append({
       type: "lineup.set",
@@ -339,8 +338,8 @@ describe("olb-api", () => {
       },
     };
 
-    await request(app.getHttpServer()).post(`/games/${gameId}/events`).send(pitch).expect(201);
-    await request(app.getHttpServer()).post(`/games/${gameId}/events`).send(pitch).expect(201);
+    await post(`/games/${gameId}/events`).send(pitch).expect(201);
+    await post(`/games/${gameId}/events`).send(pitch).expect(201);
 
     const resumed = await request(app.getHttpServer())
       .get(`/games/${gameId}/events?fromSeq=1`)
@@ -352,8 +351,7 @@ describe("olb-api", () => {
   it("returns 404 for an unknown game", async () => {
     const missing = "0192f3ff-0000-7000-8000-000000000000";
     await request(app.getHttpServer()).get(`/games/${missing}`).expect(404);
-    await request(app.getHttpServer())
-      .post(`/games/${missing}/events`)
+    await post(`/games/${missing}/events`)
       .send({ type: "note", source: "human", actor: { kind: "user", id: "u" }, payload: { text: "hi" } })
       .expect(404);
   });
@@ -363,16 +361,14 @@ describe("olb-api", () => {
     const clientId = "0192f3b1-0000-7000-8000-000000000001";
     const occurredAt = "2026-04-11T23:41:07.412Z";
 
-    const first = await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    const first = await post(`/games/${gameId}/events`)
       .send({ ...pitch("S"), id: clientId, occurredAt })
       .expect(201);
 
     expect(first.body).toMatchObject({ id: clientId, occurredAt, seq: 1 });
     expect(first.body.payload.call).toBe("S");
 
-    const retry = await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    const retry = await post(`/games/${gameId}/events`)
       .send({ ...pitch("B"), id: clientId })
       .expect(201);
 
@@ -388,8 +384,7 @@ describe("olb-api", () => {
   it("rejects an invalid client event id", async () => {
     const gameId = await createGame();
 
-    await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    await post(`/games/${gameId}/events`)
       .send({ ...pitch("S"), id: "not-a-uuid" })
       .expect(400);
   });
@@ -398,13 +393,11 @@ describe("olb-api", () => {
     const gameId = await createGame();
     const originalId = "0192f3b1-0000-7000-8000-000000000002";
 
-    const original = await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    const original = await post(`/games/${gameId}/events`)
       .send({ ...pitch("S"), id: originalId })
       .expect(201);
 
-    await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    await post(`/games/${gameId}/events`)
       .send({
         ...pitch("B"),
         id: "0192f3b1-0000-7000-8000-000000000003",
@@ -423,13 +416,11 @@ describe("olb-api", () => {
   it("voids an event through an amendment", async () => {
     const gameId = await createGame();
 
-    const original = await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    const original = await post(`/games/${gameId}/events`)
       .send({ ...pitch("B"), id: "0192f3b1-0000-7000-8000-000000000004" })
       .expect(201);
 
-    await request(app.getHttpServer())
-      .post(`/games/${gameId}/events`)
+    await post(`/games/${gameId}/events`)
       .send({
         id: "0192f3b1-0000-7000-8000-000000000005",
         type: "amendment",

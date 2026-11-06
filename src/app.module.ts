@@ -10,6 +10,7 @@ import { MemoryAuthStore } from "./auth/memory-auth.store.js";
 import { PostgresAuthStore } from "./auth/postgres-auth.store.js";
 import { ScopesService } from "./auth/scopes.js";
 import { HealthController } from "./health.controller.js";
+import { GameAccessService } from "./games/game-access.service.js";
 import { GamesController } from "./games/games.controller.js";
 import { GamesService } from "./games/games.service.js";
 import { GameStreamService } from "./games/game-stream.service.js";
@@ -40,6 +41,7 @@ import { EVENT_STORE, type EventStore } from "./store/store.js";
   ],
   providers: [
     GamesService,
+    GameAccessService,
     GameStreamService,
     ProposalsService,
     LeagueService,

@@ -4,8 +4,10 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../src/app.module.js";
 import { GameNotFoundFilter } from "../src/filters/game-not-found.filter.js";
+import { login, seedTestAuth } from "./support/auth.js";
 
 let app: INestApplication;
+let token: string;
 
 const missing = "0192f3ff-0000-7000-8000-000000000000";
 const batter = "0192f3a2-0001-7000-8000-000000000001";
@@ -17,26 +19,30 @@ beforeAll(async () => {
   app = moduleRef.createNestApplication();
   app.useGlobalFilters(new GameNotFoundFilter());
   await app.init();
+
+  await seedTestAuth(app);
+  token = await login(app);
 });
 
 afterAll(async () => {
   await app.close();
 });
 
+function post(path: string) {
+  return request(app.getHttpServer()).post(path).set("authorization", `Bearer ${token}`);
+}
+
 async function schedule(homeTeam = "Tiburones", awayTeam = "Marlins"): Promise<string> {
-  const response = await request(app.getHttpServer())
-    .post("/games")
-    .send({ homeTeam, awayTeam })
-    .expect(201);
+  const response = await post("/games").send({ homeTeam, awayTeam }).expect(201);
   return response.body.id;
 }
 
 async function start(gameId: string): Promise<void> {
-  await request(app.getHttpServer()).post(`/games/${gameId}/start`).send({}).expect(201);
+  await post(`/games/${gameId}/start`).send({}).expect(201);
 }
 
 async function append(gameId: string, body: unknown): Promise<void> {
-  await request(app.getHttpServer()).post(`/games/${gameId}/events`).send(body).expect(201);
+  await post(`/games/${gameId}/events`).send(body).expect(201);
 }
 
 function ballInPlay(runsBattedIn: number) {
@@ -55,21 +61,19 @@ describe("game lifecycle", () => {
     const state = await request(app.getHttpServer()).get(`/games/${gameId}/state`).expect(200);
     expect(state.body.status).toBe("scheduled");
 
-    const started = await request(app.getHttpServer())
-      .post(`/games/${gameId}/start`)
+    const started = await post(`/games/${gameId}/start`)
       .send({ venue: "Estadio Centenario", startedAt: "2026-04-11T23:41:07.412Z" })
       .expect(201);
 
     expect(started.body.state).toMatchObject({ status: "live", inning: 1, half: "top" });
     expect(started.body.lastSeq).toBe(0);
 
-    await request(app.getHttpServer()).post(`/games/${gameId}/start`).send({}).expect(409);
+    await post(`/games/${gameId}/start`).send({}).expect(409);
   });
 
   it("returns 404 when starting, finishing or reading the box score of an unknown game", async () => {
-    await request(app.getHttpServer()).post(`/games/${missing}/start`).send({}).expect(404);
-    await request(app.getHttpServer())
-      .post(`/games/${missing}/finish`)
+    await post(`/games/${missing}/start`).send({}).expect(404);
+    await post(`/games/${missing}/finish`)
       .send({ reason: "completed" })
       .expect(404);
     await request(app.getHttpServer()).get(`/games/${missing}/boxscore`).expect(404);
@@ -91,16 +95,14 @@ describe("game lifecycle", () => {
       .get(`/games/${gameId}/events`)
       .expect(200);
 
-    await request(app.getHttpServer())
-      .post(`/games/${gameId}/finish`)
+    await post(`/games/${gameId}/finish`)
       .send({ reason: "completed", finalScore: { home: 0, away: 3 } })
       .expect(409);
 
     const after = await request(app.getHttpServer()).get(`/games/${gameId}/events`).expect(200);
     expect(after.body).toHaveLength(before.body.length);
 
-    const finished = await request(app.getHttpServer())
-      .post(`/games/${gameId}/finish`)
+    const finished = await post(`/games/${gameId}/finish`)
       .send({ reason: "completed" })
       .expect(201);
 
@@ -121,8 +123,7 @@ describe("game lifecycle", () => {
     });
     expect(box.body.away.linescore).toEqual([2, null, null, null, null, null, null, null, null]);
 
-    await request(app.getHttpServer())
-      .post(`/games/${gameId}/finish`)
+    await post(`/games/${gameId}/finish`)
       .send({ reason: "completed" })
       .expect(409);
   });
@@ -132,8 +133,7 @@ describe("game lifecycle", () => {
     await start(gameId);
     await append(gameId, ballInPlay(1));
 
-    const finished = await request(app.getHttpServer())
-      .post(`/games/${gameId}/finish`)
+    const finished = await post(`/games/${gameId}/finish`)
       .send({ reason: "rain", finalScore: { home: 0, away: 1 } })
       .expect(201);
 
@@ -144,20 +144,17 @@ describe("game lifecycle", () => {
   });
 
   it("rejects an invalid schedule and an invalid finish reason", async () => {
-    await request(app.getHttpServer())
-      .post("/games")
+    await post("/games")
       .send({ homeTeam: "Tiburones", awayTeam: "Marlins", scheduledStart: "tomorrow" })
       .expect(400);
 
-    await request(app.getHttpServer())
-      .post("/games")
+    await post("/games")
       .send({ homeTeam: "Tiburones", awayTeam: "Marlins", venue: "x".repeat(201) })
       .expect(400);
 
     const gameId = await schedule();
     await start(gameId);
-    await request(app.getHttpServer())
-      .post(`/games/${gameId}/finish`)
+    await post(`/games/${gameId}/finish`)
       .send({ reason: "mercy" })
       .expect(400);
   });

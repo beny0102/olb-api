@@ -4,8 +4,10 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../src/app.module.js";
 import { GameNotFoundFilter } from "../src/filters/game-not-found.filter.js";
+import { login, seedTestAuth } from "./support/auth.js";
 
 let app: INestApplication;
+let token: string;
 
 const batter = "0192f3a2-0001-7000-8000-000000000001";
 
@@ -16,15 +18,21 @@ beforeAll(async () => {
   app = moduleRef.createNestApplication();
   app.useGlobalFilters(new GameNotFoundFilter());
   await app.init();
+
+  await seedTestAuth(app);
+  token = await login(app);
 });
 
 afterAll(async () => {
   await app.close();
 });
 
+function post(path: string) {
+  return request(app.getHttpServer()).post(path).set("authorization", `Bearer ${token}`);
+}
+
 async function append(gameId: string, type: string, payload: unknown): Promise<void> {
-  await request(app.getHttpServer())
-    .post(`/games/${gameId}/events`)
+  await post(`/games/${gameId}/events`)
     .send({
       type,
       source: "human",
@@ -49,13 +57,12 @@ async function play(
   homeRuns: number,
   awayRuns: number,
 ): Promise<string> {
-  const created = await request(app.getHttpServer())
-    .post("/games")
+  const created = await post("/games")
     .send({ homeTeam, awayTeam })
     .expect(201);
   const gameId = created.body.id;
 
-  await request(app.getHttpServer()).post(`/games/${gameId}/start`).send({}).expect(201);
+  await post(`/games/${gameId}/start`).send({}).expect(201);
 
   await scoreRuns(gameId, awayRuns);
   await append(gameId, "inning.end", {
@@ -72,8 +79,7 @@ async function play(
     outs: 3,
   });
 
-  await request(app.getHttpServer())
-    .post(`/games/${gameId}/finish`)
+  await post(`/games/${gameId}/finish`)
     .send({ reason: "completed" })
     .expect(201);
 

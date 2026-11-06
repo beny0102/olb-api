@@ -7,9 +7,13 @@ import {
   Post,
   Query,
   Sse,
+  UseGuards,
   type MessageEvent,
 } from "@nestjs/common";
 import { map, type Observable } from "rxjs";
+import { AuthGuard, CurrentAuth } from "../auth/auth.guard.js";
+import type { AuthContext } from "../auth/auth.service.js";
+import { GameAccessService } from "./game-access.service.js";
 import { GamesService } from "./games.service.js";
 
 function parseFromSeq(value: string | undefined): number {
@@ -21,10 +25,15 @@ function parseFromSeq(value: string | undefined): number {
 
 @Controller("games")
 export class GamesController {
-  constructor(@Inject(GamesService) private readonly games: GamesService) {}
+  constructor(
+    @Inject(GamesService) private readonly games: GamesService,
+    @Inject(GameAccessService) private readonly access: GameAccessService,
+  ) {}
 
   @Post()
-  create(@Body() body: unknown) {
+  @UseGuards(AuthGuard)
+  async create(@CurrentAuth() auth: AuthContext, @Body() body: unknown) {
+    this.access.assertCanCreate(auth);
     return this.games.createGame(body);
   }
 
@@ -34,12 +43,24 @@ export class GamesController {
   }
 
   @Post(":id/start")
-  start(@Param("id") id: string, @Body() body: unknown) {
+  @UseGuards(AuthGuard)
+  async start(
+    @CurrentAuth() auth: AuthContext,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    await this.access.assertCanScore(auth, id);
     return this.games.startGame(id, body);
   }
 
   @Post(":id/finish")
-  finish(@Param("id") id: string, @Body() body: unknown) {
+  @UseGuards(AuthGuard)
+  async finish(
+    @CurrentAuth() auth: AuthContext,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    await this.access.assertCanScore(auth, id);
     return this.games.finishGame(id, body);
   }
 
@@ -70,7 +91,13 @@ export class GamesController {
   }
 
   @Post(":id/events")
-  append(@Param("id") id: string, @Body() body: unknown) {
+  @UseGuards(AuthGuard)
+  async append(
+    @CurrentAuth() auth: AuthContext,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    await this.access.assertCanScore(auth, id);
     return this.games.appendEvent(id, body);
   }
 }

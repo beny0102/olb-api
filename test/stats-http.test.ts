@@ -11,6 +11,7 @@ import {
 } from "../src/scripts/league-seed.js";
 import { LEAGUE_STORE, type LeagueStore } from "../src/store/league.store.js";
 import { EVENT_STORE, type EventStore } from "../src/store/store.js";
+import { login, seedTestAuth } from "./support/auth.js";
 
 const UNKNOWN = "0192f3d0-0000-7000-8000-000000000099";
 const SUMMARY_GAME_ID = "0192f3d0-0000-7000-8000-000000000200";
@@ -18,6 +19,11 @@ const FULL_GAME_ID = "0192f3d0-0000-7000-8000-000000000201";
 const SUMMARY_PLAYER = player(107);
 
 let app: INestApplication;
+let token: string;
+
+function post(path: string) {
+  return request(app.getHttpServer()).post(path).set("authorization", `Bearer ${token}`);
+}
 
 function player(n: number): string {
   return `0192f3d0-0000-7000-8000-${String(n).padStart(12, "0")}`;
@@ -36,6 +42,8 @@ beforeAll(async () => {
   const league = app.get<LeagueStore>(LEAGUE_STORE);
   const events = app.get<EventStore>(EVENT_STORE);
   await seedLeague(league);
+  await seedTestAuth(app);
+  token = await login(app);
 
   // The seed writes the league catalog; the memory event store is separate,
   // so the two full/summary games need their game rows before appending.
@@ -50,10 +58,10 @@ beforeAll(async () => {
     });
   }
 
-  await request(app.getHttpServer()).post(`/games/${FULL_GAME_ID}/start`).send({}).expect(201);
+  await post(`/games/${FULL_GAME_ID}/start`).send({}).expect(201);
 
   const append = (gameId: string, body: unknown) =>
-    request(app.getHttpServer()).post(`/games/${gameId}/events`).send(body).expect(201);
+    post(`/games/${gameId}/events`).send(body).expect(201);
 
   const pitch = (batter: string, call: "B" | "S" | "H", balls: number, strikes: number) => ({
     type: "pitch",

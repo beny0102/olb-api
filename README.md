@@ -272,10 +272,31 @@ curl -X POST http://localhost:3000/admin/games \
   }'
 ```
 
+### Game writes
+
+Legacy game writes now require a Bearer token and a scope that covers the
+game. Reads (`GET /games`, `/state`, `/events`, `/boxscore`, `/stream`,
+`/proposals`, `/standings`) stay public. A missing token answers `401`; an
+authenticated user without the needed role answers `403`.
+
+| Method | Path | Required scope |
+| --- | --- | --- |
+| POST | `/games` | any `org_admin`, `competition_admin`, `team_admin` or `scorer` membership |
+| POST | `/games/:id/start` | catalog game: `org_admin` of its season's organization, `competition_admin` of its competition, or `team_admin`/`scorer` of either team season; legacy game: any scoring membership |
+| POST | `/games/:id/finish` | same as `start` |
+| POST | `/games/:id/events` | same as `start` |
+| POST | `/games/:id/proposals` | scoring roles above, plus `verifier` of the game's competition |
+| POST | `/games/:id/proposals/:pid/resolve` | scoring roles above; a `verifier` cannot resolve |
+
+A legacy game is one with no league catalog row. It has no team or competition
+identity to check, so any of `org_admin`, `competition_admin`, `team_admin` or
+`scorer` may write it.
+
 Appending a pitch:
 
 ```bash
 curl -X POST http://localhost:3000/games/$GAME/events \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{
     "type": "pitch",
@@ -386,6 +407,7 @@ game data. A proposal lives in its own `proposals` table, never in
 
 ```bash
 curl -X POST http://localhost:3000/games/$GAME/proposals \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'content-type: application/json' \
   -d '{
     "author": "Verificador",
@@ -425,7 +447,6 @@ the table is ordered by winning percentage and then run differential.
 
 - Realtime resume from an event cursor (the SSE stream starts with a snapshot;
   clients still reconcile through `/games/:id/events?fromSeq=`)
-- Scorer login and per-game write authorization for legacy event/proposal writes
 - Web and scorer login/admin interfaces
 - Advanced statistics such as ERA, fielding and situational splits
 - Postgres integration tests in CI
