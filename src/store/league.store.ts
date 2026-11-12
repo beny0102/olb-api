@@ -203,6 +203,8 @@ export interface LeagueStore {
   updateRosterEntry(input: RosterEntryInput): Promise<RosterEntryRecord | null>;
   updateGame(input: CreateLeagueGameInput): Promise<LeagueGameRecord | null>;
 
+  /** Used only to compensate a failed setup before the first admin exists. */
+  deleteOrganization(id: string): Promise<boolean>;
   deleteSeason(id: string): Promise<boolean>;
   deleteCompetition(id: string): Promise<boolean>;
   deleteTeam(id: string): Promise<boolean>;

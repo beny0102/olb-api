@@ -30,7 +30,7 @@ export function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function toPublicUser(user: UserRecord): PublicUser {
+export function toPublicUser(user: UserRecord): PublicUser {
   const { passwordHash: _passwordHash, ...publicUser } = user;
   return publicUser;
 }

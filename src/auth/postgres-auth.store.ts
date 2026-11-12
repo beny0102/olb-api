@@ -1,12 +1,14 @@
 import type pg from "pg";
-import type {
-  AuthStore,
-  MembershipRecord,
-  Role,
-  ScopeType,
-  SessionRecord,
-  UserRecord,
-  UserStatus,
+import {
+  DuplicateAuthRecordError,
+  type AuthStore,
+  type MembershipRecord,
+  type PublicUser,
+  type Role,
+  type ScopeType,
+  type SessionRecord,
+  type UserRecord,
+  type UserStatus,
 } from "./auth.store.js";
 
 interface UserRow {
@@ -47,6 +49,11 @@ function toUser(row: UserRow): UserRecord {
   };
 }
 
+function toPublicUser(row: UserRow): PublicUser {
+  const { passwordHash: _passwordHash, ...publicUser } = toUser(row);
+  return publicUser;
+}
+
 function toSession(row: SessionRow): SessionRecord {
   return {
     id: row.id,
@@ -69,6 +76,17 @@ function toMembership(row: MembershipRow): MembershipRecord {
   };
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: string }).code === "23505"
+  );
+}
+
+const USER_COLUMNS = "id, email, name, password_hash, status, created_at";
+const MEMBERSHIP_COLUMNS = "id, user_id, scope_type, scope_id, role, created_at";
+
 /** Postgres auth store. Upserts use the same natural keys as the DDL. */
 export class PostgresAuthStore implements AuthStore {
   readonly kind = "postgres" as const;
@@ -83,16 +101,51 @@ export class PostgresAuthStore implements AuthStore {
          name = EXCLUDED.name,
          password_hash = EXCLUDED.password_hash,
          status = EXCLUDED.status
-       RETURNING id, email, name, password_hash, status, created_at`,
+       RETURNING ${USER_COLUMNS}`,
       [input.id, input.email, input.name, input.passwordHash, input.status, input.createdAt],
     );
     return toUser(rows[0]!);
   }
 
+  async createUser(input: UserRecord): Promise<UserRecord> {
+    try {
+      const { rows } = await this.pool.query<UserRow>(
+        `INSERT INTO users (id, email, name, password_hash, status, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING ${USER_COLUMNS}`,
+        [input.id, input.email, input.name, input.passwordHash, input.status, input.createdAt],
+      );
+      return toUser(rows[0]!);
+    } catch (error) {
+      if (isUniqueViolation(error)) throw new DuplicateAuthRecordError("email");
+      throw error;
+    }
+  }
+
+  async updateUser(input: UserRecord): Promise<UserRecord | null> {
+    try {
+      const { rows } = await this.pool.query<UserRow>(
+        `UPDATE users
+            SET email = $2, name = $3, password_hash = $4, status = $5
+          WHERE id = $1
+          RETURNING ${USER_COLUMNS}`,
+        [input.id, input.email, input.name, input.passwordHash, input.status],
+      );
+      return rows[0] ? toUser(rows[0]) : null;
+    } catch (error) {
+      if (isUniqueViolation(error)) throw new DuplicateAuthRecordError("email");
+      throw error;
+    }
+  }
+
+  async deleteUser(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`DELETE FROM users WHERE id = $1`, [id]);
+    return (rowCount ?? 0) > 0;
+  }
+
   async getUserByEmail(email: string): Promise<UserRecord | null> {
     const { rows } = await this.pool.query<UserRow>(
-      `SELECT id, email, name, password_hash, status, created_at
-         FROM users WHERE email = $1`,
+      `SELECT ${USER_COLUMNS} FROM users WHERE lower(email) = lower($1)`,
       [email],
     );
     return rows[0] ? toUser(rows[0]) : null;
@@ -100,11 +153,35 @@ export class PostgresAuthStore implements AuthStore {
 
   async getUserById(id: string): Promise<UserRecord | null> {
     const { rows } = await this.pool.query<UserRow>(
-      `SELECT id, email, name, password_hash, status, created_at
-         FROM users WHERE id = $1`,
+      `SELECT ${USER_COLUMNS} FROM users WHERE id = $1`,
       [id],
     );
     return rows[0] ? toUser(rows[0]) : null;
+  }
+
+  async countUsers(): Promise<number> {
+    const { rows } = await this.pool.query<{ count: number }>(
+      `SELECT count(*)::int AS count FROM users`,
+    );
+    return rows[0]?.count ?? 0;
+  }
+
+  async listUsersByOrganization(
+    organizationId: string,
+    scopeIds: readonly string[],
+  ): Promise<PublicUser[]> {
+    const { rows } = await this.pool.query<UserRow>(
+      `SELECT DISTINCT ${USER_COLUMNS.split(", ")
+        .map((column) => `u.${column}`)
+        .join(", ")}
+         FROM users u
+         JOIN memberships m ON m.user_id = u.id
+        WHERE (m.scope_type = 'organization' AND m.scope_id = $1)
+           OR (m.scope_type <> 'organization' AND m.scope_id = ANY($2::uuid[]))
+        ORDER BY u.email ASC, u.id ASC`,
+      [organizationId, scopeIds],
+    );
+    return rows.map(toPublicUser);
   }
 
   async createSession(input: SessionRecord): Promise<SessionRecord> {
@@ -141,26 +218,74 @@ export class PostgresAuthStore implements AuthStore {
     );
   }
 
+  async revokeSessionsByUser(userId: string): Promise<number> {
+    const { rowCount } = await this.pool.query(
+      `UPDATE sessions SET revoked_at = now()
+        WHERE user_id = $1 AND revoked_at IS NULL`,
+      [userId],
+    );
+    return rowCount ?? 0;
+  }
+
   async upsertMembership(input: MembershipRecord): Promise<MembershipRecord> {
     const { rows } = await this.pool.query<MembershipRow>(
       `INSERT INTO memberships (id, user_id, scope_type, scope_id, role, created_at)
        VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (user_id, scope_type, scope_id, role) DO UPDATE SET
          role = EXCLUDED.role
-       RETURNING id, user_id, scope_type, scope_id, role, created_at`,
+       RETURNING ${MEMBERSHIP_COLUMNS}`,
       [input.id, input.userId, input.scopeType, input.scopeId, input.role, input.createdAt],
     );
     return toMembership(rows[0]!);
   }
 
+  async getMembershipById(id: string): Promise<MembershipRecord | null> {
+    const { rows } = await this.pool.query<MembershipRow>(
+      `SELECT ${MEMBERSHIP_COLUMNS} FROM memberships WHERE id = $1`,
+      [id],
+    );
+    return rows[0] ? toMembership(rows[0]) : null;
+  }
+
   async listMemberships(userId: string): Promise<MembershipRecord[]> {
     const { rows } = await this.pool.query<MembershipRow>(
-      `SELECT id, user_id, scope_type, scope_id, role, created_at
+      `SELECT ${MEMBERSHIP_COLUMNS}
          FROM memberships WHERE user_id = $1
         ORDER BY scope_type ASC, scope_id ASC, role ASC, id ASC`,
       [userId],
     );
     return rows.map(toMembership);
+  }
+
+  async listMembershipsByOrganization(
+    organizationId: string,
+    scopeIds: readonly string[],
+  ): Promise<MembershipRecord[]> {
+    const { rows } = await this.pool.query<MembershipRow>(
+      `SELECT ${MEMBERSHIP_COLUMNS}
+         FROM memberships
+        WHERE (scope_type = 'organization' AND scope_id = $1)
+           OR (scope_type <> 'organization' AND scope_id = ANY($2::uuid[]))
+        ORDER BY scope_type ASC, scope_id ASC, role ASC, user_id ASC, id ASC`,
+      [organizationId, scopeIds],
+    );
+    return rows.map(toMembership);
+  }
+
+  async deleteMembership(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `DELETE FROM memberships WHERE id = $1`,
+      [id],
+    );
+    return (rowCount ?? 0) > 0;
+  }
+
+  async setPasswordHash(userId: string, passwordHash: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(
+      `UPDATE users SET password_hash = $2 WHERE id = $1`,
+      [userId, passwordHash],
+    );
+    return (rowCount ?? 0) > 0;
   }
 
   async ping(): Promise<void> {

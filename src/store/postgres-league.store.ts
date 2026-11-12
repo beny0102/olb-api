@@ -658,6 +658,11 @@ export class PostgresLeagueStore implements LeagueStore {
     return rows[0] ? toGame(rows[0]) : null;
   }
 
+  async deleteOrganization(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`DELETE FROM organizations WHERE id = $1`, [id]);
+    return (rowCount ?? 0) > 0;
+  }
+
   async deleteSeason(id: string): Promise<boolean> {
     const { rowCount } = await this.pool.query(`DELETE FROM seasons WHERE id = $1`, [id]);
     return (rowCount ?? 0) > 0;

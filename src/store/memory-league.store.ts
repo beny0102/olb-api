@@ -192,6 +192,10 @@ export class MemoryLeagueStore implements LeagueStore {
     return this.enrichGame(record);
   }
 
+  async deleteOrganization(id: string): Promise<boolean> {
+    return this.organizations.delete(id);
+  }
+
   async deleteSeason(id: string): Promise<boolean> {
     return this.seasons.delete(id);
   }
