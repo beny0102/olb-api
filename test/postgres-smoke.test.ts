@@ -193,4 +193,149 @@ describe.skipIf(!enabled)("Postgres smoke", () => {
     await post(`/games/${legacy.body.id}/start`).send({}).expect(201);
     await post(`/games/${legacy.body.id}/events`).send(pitch).expect(201);
   });
+
+  it("supports catalog CRUD and roster import on Postgres", async () => {
+    const admin = (path: string) =>
+      request(app.getHttpServer()).get(path).set("authorization", `Bearer ${token}`);
+    const adminPatch = (path: string, body: unknown) =>
+      request(app.getHttpServer())
+        .patch(path)
+        .set("authorization", `Bearer ${token}`)
+        .send(body as object);
+    const adminDelete = (path: string) =>
+      request(app.getHttpServer()).delete(path).set("authorization", `Bearer ${token}`);
+
+    const organizations = await admin("/admin/organizations").expect(200);
+    expect(organizations.body).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "0192f3d0-0000-7000-8000-000000000001" })]),
+    );
+
+    await adminPatch("/admin/organizations/0192f3d0-0000-7000-8000-000000000001", {
+      name: "Liga Metropolitana Postgres",
+    }).expect(200);
+    await adminPatch(`/admin/seasons/${SEED_SEASON_ID}`, {
+      startsOn: "2026-03-01",
+    }).expect(200);
+    await adminPatch(`/admin/competitions/${SEED_COMPETITION_IDS[0]}`, {
+      sortOrder: 9,
+    }).expect(200);
+
+    const team = await post("/admin/teams")
+      .send({
+        organizationId: "0192f3d0-0000-7000-8000-000000000001",
+        name: "Postgres Team",
+        slug: "postgres-team",
+        abbreviation: "PGT",
+      })
+      .expect(201);
+    await adminPatch(`/admin/teams/${team.body.id}`, {
+      name: "Postgres Team Edited",
+    }).expect(200);
+
+    const player = await post("/admin/players")
+      .send({
+        organizationId: "0192f3d0-0000-7000-8000-000000000001",
+        firstName: "Postgres",
+        lastName: "Player",
+      })
+      .expect(201);
+    await adminPatch(`/admin/players/${player.body.id}`, {
+      firstName: "Postgres Edited",
+    }).expect(200);
+
+    const teamSeason = await post("/admin/team-seasons")
+      .send({
+        teamId: team.body.id,
+        seasonId: SEED_SEASON_ID,
+        competitionId: SEED_COMPETITION_IDS[0],
+        name: "Postgres Team Season",
+      })
+      .expect(201);
+    await adminPatch(`/admin/team-seasons/${teamSeason.body.id}`, {
+      abbreviation: "PGS",
+    }).expect(200);
+
+    const dryRun = await post(`/admin/team-seasons/${teamSeason.body.id}/roster-import`)
+      .send({
+        rows: [
+          { firstName: "Imported", lastName: "One", jersey: "1", primaryPosition: "P" },
+        ],
+        dryRun: true,
+      })
+      .expect(201);
+    expect(dryRun.body).toMatchObject({
+      dryRun: true,
+      created: { players: 1, rosterEntries: 1 },
+      unchanged: 0,
+    });
+
+    const imported = await post(`/admin/team-seasons/${teamSeason.body.id}/roster-import`)
+      .send({
+        rows: [
+          { firstName: "Imported", lastName: "One", jersey: "1", primaryPosition: "P" },
+        ],
+      })
+      .expect(201);
+    expect(imported.body).toMatchObject({
+      created: { players: 1, rosterEntries: 1 },
+      updated: { rosterEntries: 0 },
+    });
+    const rosterEntryId = imported.body.rows[0].rosterEntryId as string;
+
+    await adminPatch(`/admin/roster-entries/${rosterEntryId}`, {
+      status: "inactive",
+    }).expect(200);
+
+    const game = await post("/admin/games")
+      .send({
+        seasonId: SEED_SEASON_ID,
+        competitionId: SEED_COMPETITION_IDS[0],
+        homeTeamSeasonId: teamSeason.body.id,
+        awayTeamSeasonId: SEED_TEAM_SEASON_IDS[1],
+        scheduledStart: "2026-07-01T23:00:00.000Z",
+      })
+      .expect(201);
+    await adminPatch(`/admin/games/${game.body.id}`, {
+      venue: "Postgres Park",
+    }).expect(200);
+    await adminDelete(`/admin/games/${game.body.id}`).expect(200);
+
+    const usedPlayer = await post("/admin/players")
+      .send({
+        organizationId: "0192f3d0-0000-7000-8000-000000000001",
+        firstName: "Used",
+        lastName: "Player",
+      })
+      .expect(201);
+    await post("/admin/roster-entries")
+      .send({
+        teamSeasonId: SEED_TEAM_SEASON_IDS[0],
+        playerId: usedPlayer.body.id,
+        jersey: "99",
+      })
+      .expect(201);
+    await adminDelete(`/admin/players/${usedPlayer.body.id}?force=true`).expect(200);
+
+    await adminDelete(`/admin/team-seasons/${teamSeason.body.id}`).expect(200);
+    await adminDelete(`/admin/teams/${team.body.id}`).expect(200);
+    await adminDelete(`/admin/players/${player.body.id}`).expect(200);
+
+    const season = await post("/admin/seasons")
+      .send({
+        organizationId: "0192f3d0-0000-7000-8000-000000000001",
+        name: "2040",
+        year: 2040,
+        status: "archived",
+      })
+      .expect(201);
+    const competition = await post("/admin/competitions")
+      .send({
+        seasonId: season.body.id,
+        name: "Postgres Cup",
+        kind: "division",
+      })
+      .expect(201);
+    await adminDelete(`/admin/competitions/${competition.body.id}`).expect(200);
+    await adminDelete(`/admin/seasons/${season.body.id}`).expect(200);
+  });
 });
