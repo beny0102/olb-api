@@ -331,6 +331,18 @@ export class MemoryLeagueStore implements LeagueStore {
     return record ? { ...record } : null;
   }
 
+  async listPlayersByOrganization(organizationId: string): Promise<PlayerRecord[]> {
+    return [...this.players.values()]
+      .filter((row) => row.organizationId === organizationId)
+      .sort(
+        (a, b) =>
+          compareText(a.lastName, b.lastName) ||
+          compareText(a.firstName, b.firstName) ||
+          compareText(a.id, b.id),
+      )
+      .map((record) => ({ ...record }));
+  }
+
   async listRoster(teamSeasonId: string): Promise<RosterEntryRecord[]> {
     return [...this.rosterEntries.values()]
       .filter((row) => row.teamSeasonId === teamSeasonId)

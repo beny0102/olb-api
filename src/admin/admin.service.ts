@@ -91,6 +91,32 @@ export class AdminService {
     return this.access.organizationsFor(auth);
   }
 
+  /**
+   * Every team of the organization for the admin console. Not paginated: a
+   * league holds tens of teams. Ordered by name by the store.
+   */
+  async listOrganizationTeams(
+    auth: AuthContext,
+    id: string,
+  ): Promise<TeamRecord[]> {
+    const organization = await this.requireOrganizationV7(id);
+    this.scopes.assertOrgAdmin(auth, organization.id);
+    return this.league.listTeamsByOrganization(organization.id);
+  }
+
+  /**
+   * Every player of the organization for the admin console. Not paginated: a
+   * league holds hundreds of players. Ordered by last name, then first name.
+   */
+  async listOrganizationPlayers(
+    auth: AuthContext,
+    id: string,
+  ): Promise<PlayerRecord[]> {
+    const organization = await this.requireOrganizationV7(id);
+    this.scopes.assertOrgAdmin(auth, organization.id);
+    return this.league.listPlayersByOrganization(organization.id);
+  }
+
   async updateOrganization(
     auth: AuthContext,
     id: string,
@@ -925,6 +951,17 @@ export class AdminService {
       const competition = await this.league.getCompetition(current);
       current = competition?.parentId ?? null;
     }
+  }
+
+  /**
+   * Path identifiers on the read routes answer `400` when they are not a
+   * UUIDv7; the write routes keep their historical `404` for the same case.
+   */
+  private async requireOrganizationV7(id: string): Promise<OrganizationRecord> {
+    if (!isUuidV7(id)) {
+      throw new BadRequestException(`organization id ${id} is not a valid UUIDv7`);
+    }
+    return this.requireOrganization(id);
   }
 
   private async requireOrganization(id: string): Promise<OrganizationRecord> {

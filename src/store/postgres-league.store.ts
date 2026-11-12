@@ -825,6 +825,19 @@ export class PostgresLeagueStore implements LeagueStore {
     return rows[0] ? toPlayer(rows[0]) : null;
   }
 
+  async listPlayersByOrganization(
+    organizationId: string,
+  ): Promise<PlayerRecord[]> {
+    const { rows } = await this.pool.query<PlayerRow>(
+      `SELECT id, organization_id, first_name, last_name, created_at
+         FROM players
+        WHERE organization_id = $1
+        ORDER BY last_name ASC, first_name ASC, id ASC`,
+      [organizationId],
+    );
+    return rows.map(toPlayer);
+  }
+
   async findPlayerByName(
     organizationId: string,
     firstName: string,

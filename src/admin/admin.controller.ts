@@ -31,6 +31,22 @@ export class AdminController {
     return this.admin.listOrganizations(auth);
   }
 
+  @Get("organizations/:id/teams")
+  listOrganizationTeams(
+    @CurrentAuth() auth: AuthContext,
+    @Param("id") id: string,
+  ) {
+    return this.admin.listOrganizationTeams(auth, id);
+  }
+
+  @Get("organizations/:id/players")
+  listOrganizationPlayers(
+    @CurrentAuth() auth: AuthContext,
+    @Param("id") id: string,
+  ) {
+    return this.admin.listOrganizationPlayers(auth, id);
+  }
+
   @Patch("organizations/:id")
   updateOrganization(
     @CurrentAuth() auth: AuthContext,

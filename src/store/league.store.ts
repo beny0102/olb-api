@@ -226,6 +226,8 @@ export interface LeagueStore {
   listTeamSeasonsByTeam(teamId: string): Promise<TeamSeasonRecord[]>;
   getTeamSeason(id: string): Promise<TeamSeasonRecord | null>;
   getPlayer(id: string): Promise<PlayerRecord | null>;
+  /** All players of the organization, ordered by last name then first name. */
+  listPlayersByOrganization(organizationId: string): Promise<PlayerRecord[]>;
   findPlayerByName(
     organizationId: string,
     firstName: string,
