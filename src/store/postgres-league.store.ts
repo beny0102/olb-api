@@ -777,6 +777,17 @@ export class PostgresLeagueStore implements LeagueStore {
     return rows.map(toTeamSeason);
   }
 
+  async listTeamsByOrganization(organizationId: string): Promise<TeamRecord[]> {
+    const { rows } = await this.pool.query<TeamRow>(
+      `SELECT id, organization_id, name, slug, abbreviation, created_at
+         FROM teams
+        WHERE organization_id = $1
+        ORDER BY name ASC, id ASC`,
+      [organizationId],
+    );
+    return rows.map(toTeam);
+  }
+
   async listTeamSeasonsBySeason(seasonId: string): Promise<TeamSeasonRecord[]> {
     const { rows } = await this.pool.query<TeamSeasonRow>(
       `${TEAM_SEASON_SELECT}
@@ -1066,6 +1077,23 @@ export class PostgresLeagueStore implements LeagueStore {
       [organizationId, keepId ?? null],
     );
     return rowCount ?? 0;
+  }
+
+  async transaction<T>(fn: (store: LeagueStore) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+
+    try {
+      await client.query("BEGIN");
+      const scoped = new PostgresLeagueStore(client as unknown as pg.Pool);
+      const result = await fn(scoped);
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async ping(): Promise<void> {

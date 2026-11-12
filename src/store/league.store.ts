@@ -221,6 +221,7 @@ export interface LeagueStore {
   getTeam(id: string): Promise<TeamRecord | null>;
   getTeamBySlug(slug: string): Promise<TeamRecord | null>;
   listTeams(competitionId: string): Promise<TeamSeasonRecord[]>;
+  listTeamsByOrganization(organizationId: string): Promise<TeamRecord[]>;
   listTeamSeasonsBySeason(seasonId: string): Promise<TeamSeasonRecord[]>;
   listTeamSeasonsByTeam(teamId: string): Promise<TeamSeasonRecord[]>;
   getTeamSeason(id: string): Promise<TeamSeasonRecord | null>;
@@ -243,6 +244,12 @@ export interface LeagueStore {
 
   /** Applies a roster import atomically. `dryRun` reads but writes nothing. */
   importRoster(input: RosterImportInput): Promise<RosterImportResult>;
+
+  /**
+   * Runs `fn` against a store whose writes commit together or not at all.
+   * Callbacks must use the provided store, not the outer instance.
+   */
+  transaction<T>(fn: (store: LeagueStore) => Promise<T>): Promise<T>;
 
   ping(): Promise<void>;
 }

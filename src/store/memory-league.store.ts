@@ -30,6 +30,15 @@ function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+function cloneMap<K, V extends object>(source: Map<K, V>): Map<K, V> {
+  return new Map([...source].map(([key, value]) => [key, { ...value }]));
+}
+
+function restoreMap<K, V>(target: Map<K, V>, source: Map<K, V>): void {
+  target.clear();
+  for (const [key, value] of source) target.set(key, value);
+}
+
 function compareJersey(a: RosterEntryRecord, b: RosterEntryRecord): number {
   const left = a.jersey === null ? Number.POSITIVE_INFINITY : Number(a.jersey);
   const right = b.jersey === null ? Number.POSITIVE_INFINITY : Number(b.jersey);
@@ -275,6 +284,13 @@ export class MemoryLeagueStore implements LeagueStore {
       .sort((a, b) => compareText(a.name, b.name) || compareText(a.id, b.id));
   }
 
+  async listTeamsByOrganization(organizationId: string): Promise<TeamRecord[]> {
+    return [...this.teams.values()]
+      .filter((row) => row.organizationId === organizationId)
+      .sort((a, b) => compareText(a.name, b.name) || compareText(a.id, b.id))
+      .map((record) => ({ ...record }));
+  }
+
   async listTeamSeasonsBySeason(seasonId: string): Promise<TeamSeasonRecord[]> {
     return [...this.teamSeasons.values()]
       .filter((row) => row.seasonId === seasonId)
@@ -480,6 +496,35 @@ export class MemoryLeagueStore implements LeagueStore {
       }
     }
     return archived;
+  }
+
+  async transaction<T>(fn: (store: LeagueStore) => Promise<T>): Promise<T> {
+    const snapshot = {
+      organizations: cloneMap(this.organizations),
+      seasons: cloneMap(this.seasons),
+      competitions: cloneMap(this.competitions),
+      teams: cloneMap(this.teams),
+      teamSeasons: cloneMap(this.teamSeasons),
+      players: cloneMap(this.players),
+      rosterEntries: cloneMap(this.rosterEntries),
+      games: cloneMap(this.games),
+      gameSummaries: cloneMap(this.gameSummaries),
+    };
+
+    try {
+      return await fn(this);
+    } catch (error) {
+      restoreMap(this.organizations, snapshot.organizations);
+      restoreMap(this.seasons, snapshot.seasons);
+      restoreMap(this.competitions, snapshot.competitions);
+      restoreMap(this.teams, snapshot.teams);
+      restoreMap(this.teamSeasons, snapshot.teamSeasons);
+      restoreMap(this.players, snapshot.players);
+      restoreMap(this.rosterEntries, snapshot.rosterEntries);
+      restoreMap(this.games, snapshot.games);
+      restoreMap(this.gameSummaries, snapshot.gameSummaries);
+      throw error;
+    }
   }
 
   async ping(): Promise<void> {
