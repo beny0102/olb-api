@@ -348,6 +348,86 @@ curl -X POST http://localhost:3000/admin/games \
   }'
 ```
 
+### League bundle export/import
+
+An organization admin can move league configuration between deployments with
+the `olb.league/1` bundle. The bundle carries seasons, competitions, teams,
+team seasons with their rosters, and scheduled games only. Users, memberships,
+events, proposals, summaries and games with events or a final score are never
+exported.
+
+| Method | Path | Required scope | Result |
+| --- | --- | --- | --- |
+| GET | `/admin/export?seasonId=` | `org_admin` of the season's organization; all seasons when the user administers one organization | `application/json` attachment |
+| POST | `/admin/import?dryRun=true` | `org_admin` of the target organization | `200` dry-run diff, `201` applied |
+
+The export body is the bundle itself:
+
+```json
+{
+  "format": "olb.league/1",
+  "exportedAt": "2026-11-11T18:00:00.000Z",
+  "organization": { "slug": "liga-metropolitana", "name": "Liga Metropolitana" },
+  "seasons": [{
+    "id": "...", "year": 2026, "name": "2026", "status": "active",
+    "startsOn": "2026-03-01", "endsOn": "2026-11-30",
+    "competitions": [{
+      "id": "...", "name": "Zona Norte", "kind": "division",
+      "parentId": null, "level": 1, "sortOrder": 1
+    }]
+  }],
+  "teams": [{ "id": "...", "name": "Tiburones", "slug": "tiburones", "abbreviation": "TIB" }],
+  "teamSeasons": [{
+    "id": "...", "teamId": "...", "seasonId": "...", "competitionId": "...",
+    "name": "Tiburones", "abbreviation": "TIB",
+    "roster": [{
+      "id": "...",
+      "player": { "id": "...", "firstName": "Alejandro", "lastName": "Aguilar" },
+      "jersey": "2", "primaryPosition": "C",
+      "eligibilityStart": "2026-03-01", "eligibilityEnd": null,
+      "status": "active"
+    }]
+  }],
+  "games": [{
+    "id": "...", "seasonId": "...", "competitionId": "...",
+    "homeTeamSeasonId": "...", "awayTeamSeasonId": "...",
+    "scheduledStart": "2026-03-14T22:00:00.000Z",
+    "venue": "Estadio Metropolitano", "coverage": "full",
+    "dataSource": "official", "rulesProfile": null
+  }]
+}
+```
+
+`POST /admin/import` takes that bundle as the request body directly (no
+wrapper). The target is always the authenticated user's organization; the
+bundle organization is metadata and its slug must match the target, otherwise
+the request answers `409 organization_mismatch`. `dryRun` defaults to `false`;
+a dry run writes nothing and returns
+`{dryRun, created, updated, unchanged, conflicts, warnings}`. Counts cover
+`seasons`, `competitions`, `teams`, `teamSeasons`, `players`, `rosterEntries`
+and `games`.
+
+Import matches rows by ID inside the target organization. A conflicting natural
+key (team slug, season year, competition name, team-season team/season or name,
+roster player/team season/eligibility start, game identity) or an ID owned by
+another organization aborts with `409` and a conflict list; nothing is guessed
+and nothing is written. Applying runs in one transaction in dependency order;
+a second identical import reports `created: 0, updated: 0`. Rows absent from
+the bundle are never deleted. A game that already has events is left unchanged
+and reported as a warning.
+
+The CLI uses the same endpoints, so the same scope rules apply:
+
+```bash
+npm run league:export -- --out league.json [--season <season-id>]
+npm run league:import -- --file league.json [--dry-run] [--org <slug>]
+```
+
+Both read `OLB_API_URL` (default `http://127.0.0.1:3001`). Authentication is
+`OLB_TOKEN`, or `OLB_EMAIL` plus `OLB_PASSWORD` to log in first. The token is
+never printed. Import prints the created/updated/unchanged counts, warnings and
+conflicts, and exits non-zero on a conflict or request error.
+
 ### Game writes
 
 Legacy game writes now require a Bearer token and a scope that covers the
