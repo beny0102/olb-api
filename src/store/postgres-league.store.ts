@@ -1,4 +1,5 @@
 import type pg from "pg";
+import { uuidv7 } from "../domain/uuid7.js";
 import type {
   CompetitionInput,
   CompetitionRecord,
@@ -13,6 +14,10 @@ import type {
   PlayerRecord,
   RosterEntryInput,
   RosterEntryRecord,
+  RosterImportAction,
+  RosterImportInput,
+  RosterImportResult,
+  RosterImportRowInput,
   SeasonInput,
   SeasonRecord,
   TeamInput,
@@ -215,6 +220,15 @@ function toGame(row: GameRow): LeagueGameRecord {
     createdAt: row.created_at.toISOString(),
     lastSeq: row.seq,
   };
+}
+
+function sameRosterFields(existing: RosterEntryRecord, row: RosterImportRowInput): boolean {
+  return (
+    existing.jersey === row.jersey &&
+    existing.primaryPosition === row.primaryPosition &&
+    existing.eligibilityEnd === row.eligibilityEnd &&
+    existing.status === row.status
+  );
 }
 
 function toGameSummary(row: GameSummaryRow): GameSummaryRecord {
@@ -502,6 +516,183 @@ export class PostgresLeagueStore implements LeagueStore {
     return toGameSummary(rows[0]!);
   }
 
+  async updateOrganization(input: OrganizationInput): Promise<OrganizationRecord | null> {
+    const { rows } = await this.pool.query<OrganizationRow>(
+      `UPDATE organizations SET name = $2, slug = $3 WHERE id = $1
+       RETURNING id, name, slug, created_at`,
+      [input.id, input.name, input.slug],
+    );
+    return rows[0] ? toOrganization(rows[0]) : null;
+  }
+
+  async updateSeason(input: SeasonInput): Promise<SeasonRecord | null> {
+    const { rows } = await this.pool.query<SeasonRow>(
+      `UPDATE seasons SET name = $2, year = $3, status = $4,
+                          starts_on = $5, ends_on = $6
+        WHERE id = $1
+       RETURNING id, organization_id, name, year, status,
+                 starts_on::text AS starts_on, ends_on::text AS ends_on`,
+      [input.id, input.name, input.year, input.status, input.startsOn, input.endsOn],
+    );
+    return rows[0] ? toSeason(rows[0]) : null;
+  }
+
+  async updateCompetition(input: CompetitionInput): Promise<CompetitionRecord | null> {
+    const { rows } = await this.pool.query<CompetitionRow>(
+      `UPDATE competitions SET parent_id = $2, name = $3, kind = $4,
+                               level = $5, sort_order = $6
+        WHERE id = $1
+       RETURNING id, season_id, parent_id, name, kind, level, sort_order`,
+      [
+        input.id,
+        input.parentId,
+        input.name,
+        input.kind,
+        input.level,
+        input.sortOrder,
+      ],
+    );
+    return rows[0] ? toCompetition(rows[0]) : null;
+  }
+
+  async updateTeam(input: TeamInput): Promise<TeamRecord | null> {
+    const { rows } = await this.pool.query<TeamRow>(
+      `UPDATE teams SET name = $2, slug = $3, abbreviation = $4 WHERE id = $1
+       RETURNING id, organization_id, name, slug, abbreviation, created_at`,
+      [input.id, input.name, input.slug, input.abbreviation],
+    );
+    return rows[0] ? toTeam(rows[0]) : null;
+  }
+
+  async updateTeamSeason(input: TeamSeasonInput): Promise<TeamSeasonRecord | null> {
+    const { rows } = await this.pool.query<TeamSeasonRow>(
+      `WITH updated AS (
+         UPDATE team_seasons
+            SET competition_id = $2, name = $3, abbreviation = $4
+          WHERE id = $1
+          RETURNING *
+       )
+       SELECT u.id, u.team_id, u.season_id, u.competition_id, u.name, u.abbreviation,
+              t.name AS team_name, c.name AS competition_name
+         FROM updated u
+         JOIN teams t ON t.id = u.team_id
+         LEFT JOIN competitions c ON c.id = u.competition_id`,
+      [input.id, input.competitionId, input.name, input.abbreviation],
+    );
+    return rows[0] ? toTeamSeason(rows[0]) : null;
+  }
+
+  async updatePlayer(input: PlayerInput): Promise<PlayerRecord | null> {
+    const { rows } = await this.pool.query<PlayerRow>(
+      `UPDATE players SET first_name = $2, last_name = $3 WHERE id = $1
+       RETURNING id, organization_id, first_name, last_name, created_at`,
+      [input.id, input.firstName, input.lastName],
+    );
+    return rows[0] ? toPlayer(rows[0]) : null;
+  }
+
+  async updateRosterEntry(input: RosterEntryInput): Promise<RosterEntryRecord | null> {
+    const { rows } = await this.pool.query<RosterEntryRow>(
+      `WITH updated AS (
+         UPDATE roster_entries
+            SET jersey = $2, primary_position = $3, eligibility_start = $4,
+                eligibility_end = $5, status = $6
+          WHERE id = $1
+          RETURNING *
+       )
+       SELECT u.id, u.team_season_id, u.player_id, u.jersey, u.primary_position,
+              u.eligibility_start::text AS eligibility_start,
+              u.eligibility_end::text AS eligibility_end,
+              u.status, p.first_name, p.last_name
+         FROM updated u
+         JOIN players p ON p.id = u.player_id`,
+      [
+        input.id,
+        input.jersey,
+        input.primaryPosition,
+        input.eligibilityStart,
+        input.eligibilityEnd,
+        input.status,
+      ],
+    );
+    return rows[0] ? toRosterEntry(rows[0]) : null;
+  }
+
+  async updateGame(input: CreateLeagueGameInput): Promise<LeagueGameRecord | null> {
+    const { rows } = await this.pool.query<GameRow>(
+      `WITH updated AS (
+         UPDATE games
+            SET home_team = $2, away_team = $3, scheduled_start = $4, venue = $5,
+                season_id = $6, competition_id = $7,
+                home_team_season_id = $8, away_team_season_id = $9,
+                coverage = $10, data_source = $11, rules_profile = $12
+          WHERE id = $1
+          RETURNING *
+       )
+       SELECT u.id, u.season_id, u.competition_id, u.home_team_season_id,
+              u.away_team_season_id,
+              COALESCE(ht.name, u.home_team) AS home_team,
+              COALESCE(awt.name, u.away_team) AS away_team,
+              u.scheduled_start, u.venue, u.coverage, u.data_source, u.rules_profile,
+              u.created_at, u.seq
+         FROM updated u
+         LEFT JOIN team_seasons hts ON hts.id = u.home_team_season_id
+         LEFT JOIN teams ht ON ht.id = hts.team_id
+         LEFT JOIN team_seasons ats ON ats.id = u.away_team_season_id
+         LEFT JOIN teams awt ON awt.id = ats.team_id`,
+      [
+        input.id,
+        input.homeTeam,
+        input.awayTeam,
+        input.scheduledStart,
+        input.venue,
+        input.seasonId,
+        input.competitionId,
+        input.homeTeamSeasonId,
+        input.awayTeamSeasonId,
+        input.coverage,
+        input.dataSource,
+        input.rulesProfile,
+      ],
+    );
+    return rows[0] ? toGame(rows[0]) : null;
+  }
+
+  async deleteSeason(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`DELETE FROM seasons WHERE id = $1`, [id]);
+    return (rowCount ?? 0) > 0;
+  }
+
+  async deleteCompetition(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`DELETE FROM competitions WHERE id = $1`, [id]);
+    return (rowCount ?? 0) > 0;
+  }
+
+  async deleteTeam(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`DELETE FROM teams WHERE id = $1`, [id]);
+    return (rowCount ?? 0) > 0;
+  }
+
+  async deleteTeamSeason(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`DELETE FROM team_seasons WHERE id = $1`, [id]);
+    return (rowCount ?? 0) > 0;
+  }
+
+  async deletePlayer(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`DELETE FROM players WHERE id = $1`, [id]);
+    return (rowCount ?? 0) > 0;
+  }
+
+  async deleteRosterEntry(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`DELETE FROM roster_entries WHERE id = $1`, [id]);
+    return (rowCount ?? 0) > 0;
+  }
+
+  async deleteGame(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`DELETE FROM games WHERE id = $1`, [id]);
+    return (rowCount ?? 0) > 0;
+  }
+
   async listOrganizations(): Promise<OrganizationRecord[]> {
     const { rows } = await this.pool.query<OrganizationRow>(
       `SELECT id, name, slug, created_at FROM organizations ORDER BY name ASC, id ASC`,
@@ -562,12 +753,41 @@ export class PostgresLeagueStore implements LeagueStore {
     return rows[0] ? toTeam(rows[0]) : null;
   }
 
+  async getTeamBySlug(slug: string): Promise<TeamRecord | null> {
+    const { rows } = await this.pool.query<TeamRow>(
+      `SELECT id, organization_id, name, slug, abbreviation, created_at
+         FROM teams WHERE slug = $1`,
+      [slug],
+    );
+    return rows[0] ? toTeam(rows[0]) : null;
+  }
+
   async listTeams(competitionId: string): Promise<TeamSeasonRecord[]> {
     const { rows } = await this.pool.query<TeamSeasonRow>(
       `${TEAM_SEASON_SELECT}
         WHERE ts.competition_id = $1
         ORDER BY ts.name ASC, ts.id ASC`,
       [competitionId],
+    );
+    return rows.map(toTeamSeason);
+  }
+
+  async listTeamSeasonsBySeason(seasonId: string): Promise<TeamSeasonRecord[]> {
+    const { rows } = await this.pool.query<TeamSeasonRow>(
+      `${TEAM_SEASON_SELECT}
+        WHERE ts.season_id = $1
+        ORDER BY ts.name ASC, ts.id ASC`,
+      [seasonId],
+    );
+    return rows.map(toTeamSeason);
+  }
+
+  async listTeamSeasonsByTeam(teamId: string): Promise<TeamSeasonRecord[]> {
+    const { rows } = await this.pool.query<TeamSeasonRow>(
+      `${TEAM_SEASON_SELECT}
+        WHERE ts.team_id = $1
+        ORDER BY ts.name ASC, ts.id ASC`,
+      [teamId],
     );
     return rows.map(toTeamSeason);
   }
@@ -589,6 +809,24 @@ export class PostgresLeagueStore implements LeagueStore {
     return rows[0] ? toPlayer(rows[0]) : null;
   }
 
+  async findPlayerByName(
+    organizationId: string,
+    firstName: string,
+    lastName: string,
+  ): Promise<PlayerRecord | null> {
+    const { rows } = await this.pool.query<PlayerRow>(
+      `SELECT id, organization_id, first_name, last_name, created_at
+         FROM players
+        WHERE organization_id = $1
+          AND lower(first_name) = lower($2)
+          AND lower(last_name) = lower($3)
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1`,
+      [organizationId, firstName, lastName],
+    );
+    return rows[0] ? toPlayer(rows[0]) : null;
+  }
+
   async listRoster(teamSeasonId: string): Promise<RosterEntryRecord[]> {
     const { rows } = await this.pool.query<RosterEntryRow>(
       `SELECT re.id, re.team_season_id, re.player_id, re.jersey, re.primary_position,
@@ -606,6 +844,43 @@ export class PostgresLeagueStore implements LeagueStore {
     return rows.map(toRosterEntry);
   }
 
+  async listRosterByPlayer(playerId: string): Promise<RosterEntryRecord[]> {
+    const { rows } = await this.pool.query<RosterEntryRow>(
+      `SELECT re.id, re.team_season_id, re.player_id, re.jersey, re.primary_position,
+              re.eligibility_start::text AS eligibility_start,
+              re.eligibility_end::text AS eligibility_end,
+              re.status, p.first_name, p.last_name
+         FROM roster_entries re
+         JOIN players p ON p.id = re.player_id
+        WHERE re.player_id = $1
+        ORDER BY re.team_season_id ASC, re.id ASC`,
+      [playerId],
+    );
+    return rows.map(toRosterEntry);
+  }
+
+  async getRosterEntry(id: string): Promise<RosterEntryRecord | null> {
+    const { rows } = await this.pool.query<RosterEntryRow>(
+      `SELECT re.id, re.team_season_id, re.player_id, re.jersey, re.primary_position,
+              re.eligibility_start::text AS eligibility_start,
+              re.eligibility_end::text AS eligibility_end,
+              re.status, p.first_name, p.last_name
+         FROM roster_entries re
+         JOIN players p ON p.id = re.player_id
+        WHERE re.id = $1`,
+      [id],
+    );
+    return rows[0] ? toRosterEntry(rows[0]) : null;
+  }
+
+  async deleteRosterEntriesByPlayer(playerId: string): Promise<number> {
+    const { rowCount } = await this.pool.query(
+      `DELETE FROM roster_entries WHERE player_id = $1`,
+      [playerId],
+    );
+    return rowCount ?? 0;
+  }
+
   async listGames(seasonId: string, competitionId?: string): Promise<LeagueGameRecord[]> {
     const params: unknown[] = [seasonId];
     let query = `${GAME_SELECT} WHERE g.season_id = $1`;
@@ -616,6 +891,16 @@ export class PostgresLeagueStore implements LeagueStore {
     query += ` ORDER BY g.scheduled_start ASC NULLS LAST, g.id ASC`;
 
     const { rows } = await this.pool.query<GameRow>(query, params);
+    return rows.map(toGame);
+  }
+
+  async listGamesByTeamSeason(teamSeasonId: string): Promise<LeagueGameRecord[]> {
+    const { rows } = await this.pool.query<GameRow>(
+      `${GAME_SELECT}
+        WHERE g.home_team_season_id = $1 OR g.away_team_season_id = $1
+        ORDER BY g.scheduled_start ASC NULLS LAST, g.id ASC`,
+      [teamSeasonId],
+    );
     return rows.map(toGame);
   }
 
@@ -631,6 +916,140 @@ export class PostgresLeagueStore implements LeagueStore {
   async getGame(id: string): Promise<LeagueGameRecord | null> {
     const { rows } = await this.pool.query<GameRow>(`${GAME_SELECT} WHERE g.id = $1`, [id]);
     return rows[0] ? toGame(rows[0]) : null;
+  }
+
+  async importRoster(input: RosterImportInput): Promise<RosterImportResult> {
+    const result: RosterImportResult = {
+      dryRun: input.dryRun,
+      created: { players: 0, rosterEntries: 0 },
+      updated: { rosterEntries: 0 },
+      unchanged: 0,
+      rows: [],
+    };
+    const client = await this.pool.connect();
+
+    try {
+      if (!input.dryRun) await client.query("BEGIN");
+      const now = new Date().toISOString();
+
+      for (const row of input.rows) {
+        const { rows: playerRows } = await client.query<PlayerRow>(
+          `SELECT id, organization_id, first_name, last_name, created_at
+             FROM players
+            WHERE organization_id = $1
+              AND lower(first_name) = lower($2)
+              AND lower(last_name) = lower($3)
+            ORDER BY created_at ASC, id ASC
+            LIMIT 1`,
+          [input.organizationId, row.firstName, row.lastName],
+        );
+        let player = playerRows[0] ? toPlayer(playerRows[0]) : null;
+        const playerCreated = player === null;
+
+        if (!player) {
+          const id = uuidv7();
+          if (input.dryRun) {
+            player = {
+              id,
+              organizationId: input.organizationId,
+              firstName: row.firstName,
+              lastName: row.lastName,
+              createdAt: now,
+            };
+          } else {
+            const { rows: inserted } = await client.query<PlayerRow>(
+              `INSERT INTO players (id, organization_id, first_name, last_name, created_at)
+               VALUES ($1, $2, $3, $4, $5)
+               RETURNING id, organization_id, first_name, last_name, created_at`,
+              [id, input.organizationId, row.firstName, row.lastName, now],
+            );
+            player = toPlayer(inserted[0]!);
+          }
+        }
+
+        const { rows: entryRows } = await client.query<RosterEntryRow>(
+          `SELECT re.id, re.team_season_id, re.player_id, re.jersey, re.primary_position,
+                  re.eligibility_start::text AS eligibility_start,
+                  re.eligibility_end::text AS eligibility_end,
+                  re.status, p.first_name, p.last_name
+             FROM roster_entries re
+             JOIN players p ON p.id = re.player_id
+            WHERE re.team_season_id = $1
+              AND re.player_id = $2
+              AND re.eligibility_start IS NOT DISTINCT FROM $3::date
+            LIMIT 1`,
+          [input.teamSeasonId, player.id, row.eligibilityStart],
+        );
+        const existing = entryRows[0] ? toRosterEntry(entryRows[0]) : null;
+        let action: RosterImportAction;
+        let rosterEntryId = existing?.id ?? null;
+
+        if (existing) {
+          const changed = !sameRosterFields(existing, row);
+          if (changed) {
+            result.updated.rosterEntries += 1;
+            if (!input.dryRun) {
+              await client.query(
+                `UPDATE roster_entries
+                    SET jersey = $2, primary_position = $3,
+                        eligibility_end = $4, status = $5
+                  WHERE id = $1`,
+                [
+                  existing.id,
+                  row.jersey,
+                  row.primaryPosition,
+                  row.eligibilityEnd,
+                  row.status,
+                ],
+              );
+            }
+            action = "update_roster_entry";
+          } else {
+            result.unchanged += 1;
+            action = "unchanged";
+          }
+        } else {
+          if (playerCreated) result.created.players += 1;
+          result.created.rosterEntries += 1;
+          if (!input.dryRun) {
+            const id = uuidv7();
+            await client.query(
+              `INSERT INTO roster_entries
+                 (id, team_season_id, player_id, jersey, primary_position,
+                  eligibility_start, eligibility_end, status)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+              [
+                id,
+                input.teamSeasonId,
+                player.id,
+                row.jersey,
+                row.primaryPosition,
+                row.eligibilityStart,
+                row.eligibilityEnd,
+                row.status,
+              ],
+            );
+            rosterEntryId = id;
+          }
+          action = playerCreated ? "create_player" : "create_roster_entry";
+        }
+
+        result.rows.push({
+          ...row,
+          action,
+          playerId: playerCreated && input.dryRun ? null : player.id,
+          rosterEntryId,
+        });
+      }
+
+      if (!input.dryRun) await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      if (!input.dryRun) await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async archiveActiveSeasons(organizationId: string, keepId?: string): Promise<number> {

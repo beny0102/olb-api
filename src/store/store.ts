@@ -56,6 +56,8 @@ export interface EventStore {
   createGame(input: CreateGameInput): Promise<GameRecord>;
   getGame(id: string): Promise<GameRecord | null>;
   listGames(): Promise<GameRecord[]>;
+  /** Deletes a game with its events, proposals and summary. */
+  deleteGame(id: string): Promise<boolean>;
 
   /**
    * Appends one event, assigning the next sequence number atomically.

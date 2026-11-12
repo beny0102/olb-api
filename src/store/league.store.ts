@@ -139,6 +139,43 @@ export interface GameSummaryInput {
 
 export type GameSummaryRecord = GameSummaryInput;
 
+export interface RosterImportRowInput {
+  firstName: string;
+  lastName: string;
+  jersey: string | null;
+  primaryPosition: string | null;
+  eligibilityStart: string | null;
+  eligibilityEnd: string | null;
+  status: RosterStatus;
+}
+
+export interface RosterImportInput {
+  teamSeasonId: string;
+  organizationId: string;
+  dryRun: boolean;
+  rows: RosterImportRowInput[];
+}
+
+export type RosterImportAction =
+  | "create_player"
+  | "create_roster_entry"
+  | "update_roster_entry"
+  | "unchanged";
+
+export interface RosterImportRowResult extends RosterImportRowInput {
+  action: RosterImportAction;
+  playerId: string | null;
+  rosterEntryId: string | null;
+}
+
+export interface RosterImportResult {
+  dryRun: boolean;
+  created: { players: number; rosterEntries: number };
+  updated: { rosterEntries: number };
+  unchanged: number;
+  rows: RosterImportRowResult[];
+}
+
 /**
  * League catalog reads and idempotent seed upserts. This is separate from
  * `EventStore`: a league row is descriptive metadata, while the event log
@@ -157,21 +194,53 @@ export interface LeagueStore {
   upsertGame(input: CreateLeagueGameInput): Promise<LeagueGameRecord>;
   upsertGameSummary(input: GameSummaryInput): Promise<GameSummaryRecord>;
 
+  updateOrganization(input: OrganizationInput): Promise<OrganizationRecord | null>;
+  updateSeason(input: SeasonInput): Promise<SeasonRecord | null>;
+  updateCompetition(input: CompetitionInput): Promise<CompetitionRecord | null>;
+  updateTeam(input: TeamInput): Promise<TeamRecord | null>;
+  updateTeamSeason(input: TeamSeasonInput): Promise<TeamSeasonRecord | null>;
+  updatePlayer(input: PlayerInput): Promise<PlayerRecord | null>;
+  updateRosterEntry(input: RosterEntryInput): Promise<RosterEntryRecord | null>;
+  updateGame(input: CreateLeagueGameInput): Promise<LeagueGameRecord | null>;
+
+  deleteSeason(id: string): Promise<boolean>;
+  deleteCompetition(id: string): Promise<boolean>;
+  deleteTeam(id: string): Promise<boolean>;
+  deleteTeamSeason(id: string): Promise<boolean>;
+  deletePlayer(id: string): Promise<boolean>;
+  deleteRosterEntry(id: string): Promise<boolean>;
+  deleteGame(id: string): Promise<boolean>;
+
   listOrganizations(): Promise<OrganizationRecord[]>;
   getSeason(id: string): Promise<SeasonRecord | null>;
   listSeasons(organizationId?: string): Promise<SeasonRecord[]>;
   getCompetition(id: string): Promise<CompetitionRecord | null>;
   listCompetitions(seasonId: string): Promise<CompetitionRecord[]>;
   getTeam(id: string): Promise<TeamRecord | null>;
+  getTeamBySlug(slug: string): Promise<TeamRecord | null>;
   listTeams(competitionId: string): Promise<TeamSeasonRecord[]>;
+  listTeamSeasonsBySeason(seasonId: string): Promise<TeamSeasonRecord[]>;
+  listTeamSeasonsByTeam(teamId: string): Promise<TeamSeasonRecord[]>;
   getTeamSeason(id: string): Promise<TeamSeasonRecord | null>;
   getPlayer(id: string): Promise<PlayerRecord | null>;
+  findPlayerByName(
+    organizationId: string,
+    firstName: string,
+    lastName: string,
+  ): Promise<PlayerRecord | null>;
   listRoster(teamSeasonId: string): Promise<RosterEntryRecord[]>;
+  listRosterByPlayer(playerId: string): Promise<RosterEntryRecord[]>;
+  getRosterEntry(id: string): Promise<RosterEntryRecord | null>;
+  deleteRosterEntriesByPlayer(playerId: string): Promise<number>;
   /** Archives every active season of an organization except `keepId`. */
   archiveActiveSeasons(organizationId: string, keepId?: string): Promise<number>;
   listGames(seasonId: string, competitionId?: string): Promise<LeagueGameRecord[]>;
+  listGamesByTeamSeason(teamSeasonId: string): Promise<LeagueGameRecord[]>;
   getGame(id: string): Promise<LeagueGameRecord | null>;
   getGameSummary(gameId: string): Promise<GameSummaryRecord | null>;
+
+  /** Applies a roster import atomically. `dryRun` reads but writes nothing. */
+  importRoster(input: RosterImportInput): Promise<RosterImportResult>;
 
   ping(): Promise<void>;
 }

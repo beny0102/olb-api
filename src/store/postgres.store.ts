@@ -102,6 +102,11 @@ export class PostgresEventStore implements EventStore {
     return rows.map(toRecord);
   }
 
+  async deleteGame(id: string): Promise<boolean> {
+    const { rowCount } = await this.pool.query(`DELETE FROM games WHERE id = $1`, [id]);
+    return (rowCount ?? 0) > 0;
+  }
+
   async append(gameId: string, build: (seq: number) => Event): Promise<Event> {
     const client = await this.pool.connect();
     try {

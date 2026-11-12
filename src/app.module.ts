@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import type pg from "pg";
 import { AdminController } from "./admin/admin.controller.js";
 import { AdminService } from "./admin/admin.service.js";
+import { CatalogAccessService } from "./admin/catalog-access.service.js";
 import { AuthController } from "./auth/auth.controller.js";
 import { AuthGuard, LogoutGuard } from "./auth/auth.guard.js";
 import { AuthService } from "./auth/auth.service.js";
@@ -50,6 +51,7 @@ import { EVENT_STORE, type EventStore } from "./store/store.js";
     AuthGuard,
     LogoutGuard,
     ScopesService,
+    CatalogAccessService,
     AdminService,
     {
       provide: PG_POOL,

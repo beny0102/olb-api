@@ -45,6 +45,22 @@ export class MemoryEventStore implements EventStore {
       .map((record) => ({ ...record }));
   }
 
+  async deleteGame(id: string): Promise<boolean> {
+    if (!this.games.delete(id)) return false;
+
+    for (const event of this.events.get(id) ?? []) {
+      this.eventsById.delete(event.id);
+    }
+    this.events.delete(id);
+    this.tails.delete(id);
+
+    for (const proposalId of this.proposalsByGame.get(id) ?? []) {
+      this.proposals.delete(proposalId);
+    }
+    this.proposalsByGame.delete(id);
+    return true;
+  }
+
   async append(gameId: string, build: (seq: number) => Event): Promise<Event> {
     const previous = this.tails.get(gameId) ?? Promise.resolve();
     const run = previous.then(() => this.appendNow(gameId, build));
