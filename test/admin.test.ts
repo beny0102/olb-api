@@ -299,6 +299,13 @@ describe("league admin writes", () => {
     );
   });
 
+  it("answers 403 when a scorer adds a roster entry", async () => {
+    await post("/admin/roster-entries", scorerToken, {
+      teamSeasonId: SEED_TEAM_SEASON_IDS[0],
+      playerId,
+    }).expect(403);
+  });
+
   it("answers 403 when a team admin writes for another team", async () => {
     await post("/admin/roster-entries", tiburonesToken, {
       teamSeasonId: SEED_TEAM_SEASON_IDS[1],

@@ -11,7 +11,6 @@ import { uuidv7 } from "../domain/uuid7.js";
 import {
   hasCompetitionAdmin,
   hasOrgAdmin,
-  hasTeamRole,
   ScopesService,
 } from "../auth/scopes.js";
 import {
@@ -559,12 +558,7 @@ export class AdminService {
       throw new BadRequestException("playerId must belong to the team's organization");
     }
 
-    const competitionAdmin =
-      teamSeason.competitionId !== null && hasCompetitionAdmin(auth, teamSeason.competitionId);
-    const teamAdmin = hasTeamRole(auth, teamSeason.id, ["team_admin", "scorer"]);
-    if (!hasOrgAdmin(auth, season.organizationId) && !competitionAdmin && !teamAdmin) {
-      throw new ForbiddenException("team, competition or organization admin role required");
-    }
+    this.access.assertRosterManager(auth, season, teamSeason);
 
     return this.league.upsertRosterEntry({
       id: uuidv7(),
