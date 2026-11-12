@@ -122,6 +122,29 @@ describe("league store (memory)", () => {
     expect(total).toBe(72);
   });
 
+  it("lists the organization catalog by name and surname", async () => {
+    const teams = await store.listTeamsByOrganization(SEED_ORGANIZATION_ID);
+    expect(teams.map((row) => row.name)).toEqual([
+      "Corsarios",
+      "Faros",
+      "Mantarrayos",
+      "Tiburones",
+    ]);
+
+    const players = await store.listPlayersByOrganization(SEED_ORGANIZATION_ID);
+    expect(players).toHaveLength(72);
+    const keys = players.map(
+      (row) => `${row.lastName}\u0000${row.firstName}`,
+    );
+    expect(keys).toEqual(
+      [...keys].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)),
+    );
+
+    expect(
+      await store.listPlayersByOrganization("0192f3d0-0000-7009-8000-000000000001"),
+    ).toEqual([]);
+  });
+
   it("reads eight games with the two seeded summaries", async () => {
     const games = await store.listGames(SEED_SEASON_ID);
     expect(games).toHaveLength(8);

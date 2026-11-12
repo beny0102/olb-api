@@ -210,6 +210,22 @@ describe.skipIf(!enabled)("Postgres smoke", () => {
       expect.arrayContaining([expect.objectContaining({ id: "0192f3d0-0000-7000-8000-000000000001" })]),
     );
 
+    const organizationTeams = await admin(
+      "/admin/organizations/0192f3d0-0000-7000-8000-000000000001/teams",
+    ).expect(200);
+    expect(organizationTeams.body.map((row: { name: string }) => row.name)).toEqual([
+      "Corsarios",
+      "Faros",
+      "Mantarrayos",
+      "Tiburones",
+    ]);
+
+    const organizationPlayers = await admin(
+      "/admin/organizations/0192f3d0-0000-7000-8000-000000000001/players",
+    ).expect(200);
+    expect(organizationPlayers.body).toHaveLength(72);
+    expect(organizationPlayers.body[0]).toMatchObject({ lastName: "Acosta" });
+
     await adminPatch("/admin/organizations/0192f3d0-0000-7000-8000-000000000001", {
       name: "Liga Metropolitana Postgres",
     }).expect(200);
