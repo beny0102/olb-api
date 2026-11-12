@@ -235,6 +235,82 @@ holds two roles). Override the demo passwords with `SEED_ADMIN_PASSWORD`,
 `SEED_NORTE_PASSWORD`, `SEED_TIBURONES_PASSWORD` and `SEED_VERIFIER_PASSWORD`
 before seeding.
 
+### Bootstrap (setup)
+
+A fresh deployment has no users. `GET /setup/status` reports
+`{ "required": true }` until the first user exists.
+
+| Method | Path | Guard |
+| --- | --- | --- |
+| GET | `/setup/status` | public |
+| POST | `/setup` | setup token and no users; `409` afterwards |
+
+`POST /setup` creates the organization, its first `active` user and an
+`organization` / `org_admin` membership in one call, then removes the token
+file:
+
+```bash
+curl -X POST http://localhost:3001/setup \
+  -H 'content-type: application/json' \
+  -d '{
+    "token": "...",
+    "organization": { "name": "Liga Metropolitana", "slug": "liga-metropolitana" },
+    "admin": { "name": "Admin", "email": "admin@liga.olb", "password": "at-least-10-chars" }
+  }'
+```
+
+The token comes from `SETUP_TOKEN`, or from `deploy/.setup-token` (mode
+`0600`) when the env var is unset. On boot, if neither exists, the API
+generates 32 random bytes, writes the file and logs only its path. The token is
+never returned or logged, comparison is constant time, `/setup` allows five
+attempts per minute per IP, and a wrong token answers `401`. If the admin
+cannot be created after the organization row, the organization is deleted
+again, so no orphan is left behind. After a successful setup the endpoint
+answers `409` even with the right token.
+
+The CLI uses the same public endpoint:
+
+```bash
+export SETUP_TOKEN="$(cat deploy/.setup-token)"
+npm run setup -- \
+  --org-name "Liga Metropolitana" \
+  --org-slug liga-metropolitana \
+  --admin-name "Admin" \
+  --admin-email admin@liga.olb
+```
+
+The password comes from `--admin-password` or `SETUP_ADMIN_PASSWORD`; it is
+never printed. `OLB_API_URL` defaults to `http://127.0.0.1:3001`; the command
+prints the organization slug, the admin email and the login URL
+(`OLB_LOGIN_URL`, or `OLB_VIEWER_URL` + `/login`, default
+`http://127.0.0.1:3000/login`), and exits non-zero on error.
+
+### Users and memberships
+
+All routes below require an `org_admin` membership. Only users holding a
+membership in the caller's organization are visible; another organization's
+user answers `404`, never `403`. Emails are unique case-insensitively (stored
+normalized, `409` on duplicates), passwords need at least 10 characters, and a
+password change revokes that user's sessions. An admin cannot disable their own
+account or remove their own last `org_admin` membership (`409`).
+
+| Method | Path | Body / notes |
+| --- | --- | --- |
+| GET | `/admin/users` | users with a membership in the organization |
+| POST | `/admin/users` | `{email,name,password,memberships?}` → `{user,memberships}` |
+| PATCH | `/admin/users/:id` | `{name?,email?,status?}` (`active`/`disabled`) |
+| POST | `/admin/users/:id/password` | `{password}`; revokes that user's sessions |
+| GET | `/admin/memberships` | optional `?userId=` filter |
+| POST | `/admin/memberships` | `{userId,scopeType,scopeId,role}` |
+| DELETE | `/admin/memberships/:id` | revoke one membership |
+
+`scopeType` is `organization`, `competition` or `team_season`; `role` is
+`org_admin`, `competition_admin`, `team_admin`, `scorer`, `verifier` or
+`viewer`. A membership scope must belong to the caller's organization
+(competition → season → organization, team season → season → organization);
+a cross-organization scope answers `404`. A user created without memberships
+can still receive one later.
+
 ### Admin writes
 
 Reads stay public. Every admin write requires a Bearer token and a membership

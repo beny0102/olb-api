@@ -29,6 +29,16 @@ import { createPool, PG_POOL } from "./store/pg.js";
 import { PostgresLeagueStore } from "./store/postgres-league.store.js";
 import { PostgresEventStore } from "./store/postgres.store.js";
 import { EVENT_STORE, type EventStore } from "./store/store.js";
+import { MembershipScopeService } from "./memberships/membership-scope.service.js";
+import { SetupController } from "./setup/setup.controller.js";
+import { SetupService } from "./setup/setup.service.js";
+import {
+  loadSetupTokenState,
+  SETUP_TOKEN_STATE,
+  type SetupTokenState,
+} from "./setup/setup-token.js";
+import { UsersController } from "./users/users.controller.js";
+import { UsersService } from "./users/users.service.js";
 
 @Module({
   controllers: [
@@ -39,6 +49,8 @@ import { EVENT_STORE, type EventStore } from "./store/store.js";
     LeagueController,
     AuthController,
     AdminController,
+    SetupController,
+    UsersController,
   ],
   providers: [
     GamesService,
@@ -53,6 +65,13 @@ import { EVENT_STORE, type EventStore } from "./store/store.js";
     ScopesService,
     CatalogAccessService,
     AdminService,
+    MembershipScopeService,
+    SetupService,
+    UsersService,
+    {
+      provide: SETUP_TOKEN_STATE,
+      useFactory: (): SetupTokenState => loadSetupTokenState(),
+    },
     {
       provide: PG_POOL,
       useFactory: async (): Promise<pg.Pool | null> => {
