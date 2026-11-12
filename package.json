@@ -16,7 +16,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:migrate": "node dist/scripts/migrate.js",
     "seed:demo": "node dist/scripts/seed-demo.js",
-    "seed:league": "node dist/scripts/seed-league.js"
+    "seed:league": "node dist/scripts/seed-league.js",
+    "setup": "npm run build && node dist/scripts/setup.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",

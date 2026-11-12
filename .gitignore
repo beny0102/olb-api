@@ -3,3 +3,4 @@ dist/
 .env
 *.log
 deploy/backups/
+deploy/.setup-token
