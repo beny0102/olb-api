@@ -17,7 +17,9 @@
     "db:migrate": "node dist/scripts/migrate.js",
     "seed:demo": "node dist/scripts/seed-demo.js",
     "seed:league": "node dist/scripts/seed-league.js",
-    "setup": "npm run build && node dist/scripts/setup.js"
+    "setup": "npm run build && node dist/scripts/setup.js",
+    "league:export": "npm run build && node dist/scripts/league-export.js",
+    "league:import": "npm run build && node dist/scripts/league-import.js"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.0",
