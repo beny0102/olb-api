@@ -39,6 +39,8 @@ import {
 } from "./setup/setup-token.js";
 import { UsersController } from "./users/users.controller.js";
 import { UsersService } from "./users/users.service.js";
+import { TransferController } from "./transfer/transfer.controller.js";
+import { TransferService } from "./transfer/transfer.service.js";
 
 @Module({
   controllers: [
@@ -51,6 +53,7 @@ import { UsersService } from "./users/users.service.js";
     AdminController,
     SetupController,
     UsersController,
+    TransferController,
   ],
   providers: [
     GamesService,
@@ -68,6 +71,7 @@ import { UsersService } from "./users/users.service.js";
     MembershipScopeService,
     SetupService,
     UsersService,
+    TransferService,
     {
       provide: SETUP_TOKEN_STATE,
       useFactory: (): SetupTokenState => loadSetupTokenState(),
