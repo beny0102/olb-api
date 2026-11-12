@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { AppModule } from "../src/app.module.js";
 import { seedAuth, SEED_AUTH_EMAILS } from "../src/auth/auth-seed.js";
 import { AUTH_STORE, type AuthStore } from "../src/auth/auth.store.js";
+import { hashPassword } from "../src/auth/passwords.js";
 import { GameNotFoundFilter } from "../src/filters/game-not-found.filter.js";
 import {
   SEED_COMPETITION_IDS,
@@ -19,12 +20,15 @@ const ADMIN_EMAIL = SEED_AUTH_EMAILS[0];
 const NORTE_EMAIL = SEED_AUTH_EMAILS[1];
 const TIBURONES_EMAIL = SEED_AUTH_EMAILS[2];
 const VERIFIER_EMAIL = SEED_AUTH_EMAILS[3];
+const SCORER_EMAIL = "scorer@liga-metropolitana.olb";
+const SCORER_PASSWORD = "olb-demo-scorer";
 
 let app: INestApplication;
 let adminToken: string;
 let norteToken: string;
 let tiburonesToken: string;
 let verifierToken: string;
+let scorerToken: string;
 
 let season2027Id: string;
 let teamAId: string;
@@ -46,12 +50,31 @@ beforeAll(async () => {
   await seedLeague(app.get<LeagueStore>(LEAGUE_STORE));
   await seedAuth(app.get<AuthStore>(AUTH_STORE));
 
+  const authStore = app.get<AuthStore>(AUTH_STORE);
+  const scorer = await authStore.upsertUser({
+    id: "0192f3d0-0000-7009-8000-000000000010",
+    email: SCORER_EMAIL,
+    name: "Scorer Only",
+    passwordHash: hashPassword(SCORER_PASSWORD),
+    status: "active",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+  await authStore.upsertMembership({
+    id: "0192f3d0-0000-7009-8000-000000000011",
+    userId: scorer.id,
+    scopeType: "team_season",
+    scopeId: SEED_TEAM_SEASON_IDS[0],
+    role: "scorer",
+    createdAt: "2026-01-01T00:00:00.000Z",
+  });
+
   const tokens = await Promise.all(
     [
       [ADMIN_EMAIL, "olb-demo-admin"],
       [NORTE_EMAIL, "olb-demo-norte"],
       [TIBURONES_EMAIL, "olb-demo-tiburones"],
       [VERIFIER_EMAIL, "olb-demo-verificador"],
+      [SCORER_EMAIL, SCORER_PASSWORD],
     ].map(async ([email, password]) => {
       const response = await request(app.getHttpServer())
         .post("/auth/login")
@@ -61,7 +84,7 @@ beforeAll(async () => {
     }),
   );
 
-  [adminToken, norteToken, tiburonesToken, verifierToken] = tokens;
+  [adminToken, norteToken, tiburonesToken, verifierToken, scorerToken] = tokens;
 });
 
 afterAll(async () => {
@@ -235,6 +258,19 @@ describe("league admin writes", () => {
       dataSource: "official",
       lastSeq: -1,
     });
+  });
+
+  it("rejects team admins and scorers creating games", async () => {
+    const body = {
+      seasonId: SEED_SEASON_ID,
+      competitionId: SEED_COMPETITION_IDS[0],
+      homeTeamSeasonId: SEED_TEAM_SEASON_IDS[0],
+      awayTeamSeasonId: SEED_TEAM_SEASON_IDS[1],
+      scheduledStart: "2027-05-01T23:00:00.000Z",
+    };
+
+    await post("/admin/games", tiburonesToken, body).expect(403);
+    await post("/admin/games", scorerToken, body).expect(403);
   });
 
   it("lets a team admin add a roster entry for their own team", async () => {
