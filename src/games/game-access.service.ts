@@ -15,6 +15,8 @@ import { EVENT_STORE, type EventStore } from "../store/store.js";
 const SCORING_ROLES: readonly Role[] = ["org_admin", "competition_admin", "team_admin", "scorer"];
 const TEAM_SCORING_ROLES: readonly Role[] = ["team_admin", "scorer"];
 const PROPOSING_ROLES: readonly Role[] = [...SCORING_ROLES, "verifier"];
+const VERIFIER_ONLY_MESSAGE =
+  "verifier role can only submit proposals; scoring requires scorer, team, competition or organization role";
 
 function hasAnyMembershipRole(auth: AuthContext, roles: readonly Role[]): boolean {
   return auth.memberships.some((membership) => roles.includes(membership.role));
@@ -90,6 +92,17 @@ export class GameAccessService {
     }
 
     if (await this.canWriteLeagueGame(auth, game, roles, allowVerifier)) return;
+
+    // A verifier is a known role with a proposals-only permission, not a caller
+    // that lost its scope. Say so instead of reporting a scope mismatch.
+    if (
+      !allowVerifier &&
+      !hasAnyMembershipRole(auth, SCORING_ROLES) &&
+      hasAnyMembershipRole(auth, ["verifier"])
+    ) {
+      throw new ForbiddenException(VERIFIER_ONLY_MESSAGE);
+    }
+
     throw new ForbiddenException("game is outside the caller's scope");
   }
 

@@ -172,6 +172,25 @@ describe("proposal scopes", () => {
     await post(`/games/${SOUTH_GAME}/proposals`, verifierToken).send(proposal).expect(403);
   });
 
+  it("answers a proposals-only 403 when a verifier starts or appends to a game", async () => {
+    const message =
+      "verifier role can only submit proposals; scoring requires scorer, team, competition or organization role";
+
+    const refusedStart = await post(`/games/${PROPOSAL_GAME}/start`, verifierToken)
+      .send({})
+      .expect(403);
+    expect(refusedStart.body.message).toBe(message);
+
+    const refusedAppend = await post(`/games/${PROPOSAL_GAME}/events`, verifierToken)
+      .send(pitch())
+      .expect(403);
+    expect(refusedAppend.body.message).toBe(message);
+
+    // The same game still accepts its team scorer: only the verifier is refused.
+    await post(`/games/${PROPOSAL_GAME}/start`, tiburonesToken).send({}).expect(201);
+    await post(`/games/${PROPOSAL_GAME}/events`, tiburonesToken).send(pitch()).expect(201);
+  });
+
   it("refuses a verifier on resolve and lets an org admin decide", async () => {
     const created = await post(`/games/${PROPOSAL_GAME}/proposals`, verifierToken)
       .send(proposal)
