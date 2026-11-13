@@ -143,14 +143,15 @@ SEED=0 ./deploy/up.sh             # build and start, leave the database alone
 
 The scorer is part of the web app at `/score`; there is no separate scorer
 process or port. `up.sh` builds `../olb-contract`, the API, and the web app with
-`NEXT_PUBLIC_API_URL=http://<PUBLIC_HOST>:<API_PORT>` baked into the client
+`NEXT_PUBLIC_API_URL=<API_PUBLIC_URL>` baked into the client
 bundles, and runs the standalone Next output (`node .next/standalone/server.js`)
 with `HOSTNAME=0.0.0.0`, copying `.next/static` and `public` into the standalone
 directory first. The web server also receives
 `API_URL=http://127.0.0.1:<API_PORT>` for its server components.
 
 Startup order is API, then web. The API starts with `DATABASE_URL`, `PORT` and
-`CORS_ORIGIN` covering the web and API public URLs, and applies pending
+`CORS_ORIGIN` covering the web and API public URLs plus the plain
+`http://<PUBLIC_HOST>:<port>` origins, and applies pending
 migrations on boot. `up.sh` waits for `/health`, then for `/` on the web app, so
 a printed URL has already answered. It refuses to start when `:3000` or `:3001`
 is already listening (`ss -ltn`), before building anything; a legacy scorer on
@@ -164,6 +165,8 @@ an already seeded database the catalog is unchanged and the completed game print
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `PUBLIC_HOST` | `arch-server.tailc46b97.ts.net` | MagicDNS name baked into the client URLs and printed at the end |
+| `API_PUBLIC_URL` | `http://$PUBLIC_HOST:$API_PORT` | Public API origin baked into the web bundle and allowed by CORS |
+| `WEB_PUBLIC_URL` | `http://$PUBLIC_HOST:$WEB_PORT` | Public web origin printed and allowed by CORS |
 | `API_PORT` | `3001` | API listener and public URL port |
 | `WEB_PORT` | `3000` | Web listener and public URL port (portal and `/score`) |
 | `DATABASE_URL` | `postgres://postgres:olb@127.0.0.1:5432/olb` | API and seed connection string |
@@ -174,6 +177,24 @@ an already seeded database the catalog is unchanged and the completed game print
 The scripts bind `0.0.0.0` and leave the network alone: no `tailscale serve` and
 no firewall changes. The final lines print the web and API URLs and the PID/log
 paths. `deploy/run/` and `deploy/logs/` are gitignored.
+
+### HTTPS tailnet (Tailscale Serve)
+
+Tailscale Serve terminates TLS and proxies to the local ports, so the processes
+keep listening on `3000`/`3001` and only the public URLs change:
+
+```bash
+tailscale serve --bg --https=8443 http://127.0.0.1:3000
+tailscale serve --bg --https=8444 http://127.0.0.1:3001
+WEB_PUBLIC_URL=https://arch-server.tailc46b97.ts.net:8443 \
+API_PUBLIC_URL=https://arch-server.tailc46b97.ts.net:8444 \
+./deploy/up.sh
+```
+
+The HTTPS URL is tailnet only: Serve publishes on the tailnet, not the public
+internet, and nothing here enables Funnel. Because it is a real HTTPS origin, it
+is also the only URL where the service worker and the offline `/score` flow
+work; plain `http://<host>:3000` is for direct/local access only.
 
 ### Migrating from the separate scorer
 

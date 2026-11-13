@@ -23,8 +23,21 @@ SEED=${SEED:-1}
 RUN_DIR=${RUN_DIR:-$SCRIPT_DIR/run}
 LOG_DIR=${LOG_DIR:-$SCRIPT_DIR/logs}
 
-API_PUBLIC_URL="http://${PUBLIC_HOST}:${API_PORT}"
-WEB_PUBLIC_URL="http://${PUBLIC_HOST}:${WEB_PORT}"
+# Public URLs are what the browser and the API see. They default to the plain
+# ports; behind Tailscale Serve point them at the HTTPS tailnet URLs while the
+# processes keep listening on the local ports.
+API_PUBLIC_URL=${API_PUBLIC_URL:-http://${PUBLIC_HOST}:${API_PORT}}
+WEB_PUBLIC_URL=${WEB_PUBLIC_URL:-http://${PUBLIC_HOST}:${WEB_PORT}}
+
+# The API accepts a comma-separated allowlist. Always keep the direct HTTP
+# origins so local curl and a browser on the host still work.
+CORS_ORIGINS="$WEB_PUBLIC_URL,$API_PUBLIC_URL"
+for fallback in "http://${PUBLIC_HOST}:${WEB_PORT}" "http://${PUBLIC_HOST}:${API_PORT}"; do
+  case ",$CORS_ORIGINS," in
+    *",$fallback,"*) ;;
+    *) CORS_ORIGINS="$CORS_ORIGINS,$fallback" ;;
+  esac
+done
 
 case "$SEED" in
   0 | 1) ;;
@@ -101,7 +114,7 @@ start_api() {
     NODE_ENV=production \
       DATABASE_URL="$DATABASE_URL" \
       PORT="$API_PORT" \
-      CORS_ORIGIN="$WEB_PUBLIC_URL,$API_PUBLIC_URL" \
+      CORS_ORIGIN="$CORS_ORIGINS" \
       setsid node dist/main.js >>"$LOG_DIR/api.log" 2>&1 &
     echo $! >"$RUN_DIR/api.pid"
   )
