@@ -66,6 +66,31 @@ if ! [[ "$RETENTION_DAYS" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
+wait_for_postgres() {
+  local attempt
+  for attempt in {1..30}; do
+    if [[ -n "$BACKUP_CONTAINER" ]]; then
+      docker exec "$BACKUP_CONTAINER" \
+        pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1 && return 0
+    else
+      docker compose -f "$COMPOSE_FILE" exec -T postgres \
+        pg_isready -U "$POSTGRES_USER" -d "$POSTGRES_DB" >/dev/null 2>&1 && return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+verify_dump() {
+  if command -v pg_restore >/dev/null 2>&1; then
+    pg_restore --list "$tmp" >/dev/null
+  elif [[ -n "$BACKUP_CONTAINER" ]]; then
+    docker exec -i "$BACKUP_CONTAINER" pg_restore --list < "$tmp" >/dev/null
+  else
+    docker compose -f "$COMPOSE_FILE" exec -T postgres pg_restore --list < "$tmp" >/dev/null
+  fi
+}
+
 mkdir -p "$BACKUP_DIR"
 stamp="$(date -u +%Y%m%d-%H%M%S)"
 file="$BACKUP_DIR/olb-$stamp.dump"
@@ -81,6 +106,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
+echo "waiting for ${BACKUP_CONTAINER:-compose postgres} to accept connections..."
+if ! wait_for_postgres; then
+  echo "Postgres did not accept connections after 30 seconds" >&2
+  exit 1
+fi
+
 echo "dumping $POSTGRES_DB from ${BACKUP_CONTAINER:-compose postgres}..."
 if [[ -n "$BACKUP_CONTAINER" ]]; then
   docker exec -i "$BACKUP_CONTAINER" \
@@ -92,6 +123,13 @@ fi
 
 if [[ ! -s "$tmp" ]]; then
   echo "pg_dump produced an empty file" >&2
+  exit 1
+fi
+
+# A dump is not a backup until it can be read back: list the archive before
+# publishing it, so a truncated or corrupt file never replaces a good one.
+if ! verify_dump; then
+  echo "pg_restore could not read the dump; leaving $tmp untouched" >&2
   exit 1
 fi
 

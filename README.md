@@ -105,7 +105,12 @@ docker exec olb-postgres dropdb -U postgres olb_restore_test
 ```
 
 `backup.sh` writes a custom-format archive (`pg_dump -Fc`), never a plain SQL
-file, and prunes by file age (`RETENTION_DAYS`, default 7). A nightly cron job:
+file, and prunes by file age (`RETENTION_DAYS`, default 7). Before dumping it
+waits up to 30 seconds for `pg_isready`, so a backup taken while Postgres is
+still starting does not fail or capture a half-open server. After the dump it
+lists the archive with `pg_restore --list` and only then publishes the file; a
+truncated or unreadable dump exits non-zero and stays as `.partial`. A nightly
+cron job:
 
 ```cron
 0 3 * * * cd /home/benyp/work/olb/olb-api && ./deploy/backup.sh >> /var/log/olb-backup.log 2>&1
