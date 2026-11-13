@@ -2,13 +2,13 @@
 # Build and start the OLB stack as plain Node processes (no Docker, no root).
 #
 #   ./deploy/up.sh
-#   PUBLIC_HOST=127.0.0.1 API_PORT=3401 WEB_PORT=3400 SCORER_PORT=3402 \
+#   PUBLIC_HOST=127.0.0.1 API_PORT=3401 WEB_PORT=3400 \
 #     DATABASE_URL=postgres://postgres:olb@127.0.0.1:5432/olb ./deploy/up.sh
 #
-# The script builds the contract, the API and the two Next apps, starts the API
-# first, waits for /health, then starts web and scorer and waits for /. PIDs and
-# logs live under deploy/run and deploy/logs, both gitignored. Stop with
-# ./deploy/down.sh.
+# The script builds the contract, the API and the web app, starts the API first,
+# waits for /health, then starts web and waits for /. The scorer is part of the
+# web app at /score, so there is no separate scorer process. PIDs and logs live
+# under deploy/run and deploy/logs, both gitignored. Stop with ./deploy/down.sh.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -18,7 +18,6 @@ WORKSPACE=$(cd -- "$ROOT/.." && pwd)
 PUBLIC_HOST=${PUBLIC_HOST:-arch-server.tailc46b97.ts.net}
 API_PORT=${API_PORT:-3001}
 WEB_PORT=${WEB_PORT:-3000}
-SCORER_PORT=${SCORER_PORT:-3002}
 DATABASE_URL=${DATABASE_URL:-postgres://postgres:olb@127.0.0.1:5432/olb}
 SEED=${SEED:-1}
 RUN_DIR=${RUN_DIR:-$SCRIPT_DIR/run}
@@ -26,7 +25,6 @@ LOG_DIR=${LOG_DIR:-$SCRIPT_DIR/logs}
 
 API_PUBLIC_URL="http://${PUBLIC_HOST}:${API_PORT}"
 WEB_PUBLIC_URL="http://${PUBLIC_HOST}:${WEB_PORT}"
-SCORER_PUBLIC_URL="http://${PUBLIC_HOST}:${SCORER_PORT}"
 
 case "$SEED" in
   0 | 1) ;;
@@ -44,7 +42,7 @@ port_busy() {
 
 check_ports() {
   local port
-  for port in "$API_PORT" "$WEB_PORT" "$SCORER_PORT"; do
+  for port in "$API_PORT" "$WEB_PORT"; do
     if port_busy "$port"; then
       echo "up.sh: port $port is already listening; refusing to start." >&2
       echo "Stop the process on that port (or run ./deploy/down.sh) first." >&2
@@ -103,14 +101,14 @@ start_api() {
     NODE_ENV=production \
       DATABASE_URL="$DATABASE_URL" \
       PORT="$API_PORT" \
-      CORS_ORIGIN="$WEB_PUBLIC_URL,$SCORER_PUBLIC_URL,$API_PUBLIC_URL" \
+      CORS_ORIGIN="$WEB_PUBLIC_URL,$API_PUBLIC_URL" \
       setsid node dist/main.js >>"$LOG_DIR/api.log" 2>&1 &
     echo $! >"$RUN_DIR/api.pid"
   )
 }
 
-# Next nests the standalone server under the Turbopack root, which for the
-# scorer is the workspace. Accept either layout.
+# Next nests the standalone server under the Turbopack root, which for the web
+# app is the workspace. Accept either layout.
 find_server() {
   local app=$1
   if [ -f "$app/.next/standalone/server.js" ]; then
@@ -161,13 +159,7 @@ npm --prefix "$ROOT" run build
 
 echo "==> building olb-web ($API_PUBLIC_URL)"
 NEXT_PUBLIC_API_URL="$API_PUBLIC_URL" \
-  NEXT_PUBLIC_VIEWER_URL="$WEB_PUBLIC_URL" \
   npm --prefix "$WORKSPACE/olb-web" run build
-
-echo "==> building olb-scorer ($API_PUBLIC_URL)"
-NEXT_PUBLIC_API_URL="$API_PUBLIC_URL" \
-  NEXT_PUBLIC_VIEWER_URL="$WEB_PUBLIC_URL" \
-  npm --prefix "$WORKSPACE/olb-scorer" run build
 
 echo "==> starting api on :$API_PORT"
 start_api
@@ -176,10 +168,6 @@ wait_for_url "http://127.0.0.1:${API_PORT}/health" "api"
 echo "==> starting web on :$WEB_PORT"
 start_next web "$WORKSPACE/olb-web" "$WEB_PORT"
 wait_for_url "http://127.0.0.1:${WEB_PORT}/" "web"
-
-echo "==> starting scorer on :$SCORER_PORT"
-start_next scorer "$WORKSPACE/olb-scorer" "$SCORER_PORT"
-wait_for_url "http://127.0.0.1:${SCORER_PORT}/" "scorer"
 
 if [ "$SEED" = "1" ]; then
   echo "==> seeding league catalog and demo users (idempotent)"
@@ -194,9 +182,8 @@ trap - EXIT
 
 echo
 echo "OLB stack is up."
-echo "  web     $WEB_PUBLIC_URL"
+echo "  web     $WEB_PUBLIC_URL  (scorer at $WEB_PUBLIC_URL/score)"
 echo "  api     $API_PUBLIC_URL  (health: $API_PUBLIC_URL/health)"
-echo "  scorer  $SCORER_PUBLIC_URL"
-echo "  pids    $RUN_DIR/{api,web,scorer}.pid"
-echo "  logs    $LOG_DIR/{api,web,scorer}.log"
+echo "  pids    $RUN_DIR/{api,web}.pid"
+echo "  logs    $LOG_DIR/{api,web}.log"
 echo "Stop with: $SCRIPT_DIR/down.sh"

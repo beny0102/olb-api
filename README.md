@@ -138,22 +138,23 @@ self-contained demo.
 ```bash
 ./deploy/up.sh                    # build, start and seed
 SEED=0 ./deploy/up.sh             # build and start, leave the database alone
-./deploy/down.sh                  # stop the three process groups (safe twice)
+./deploy/down.sh                  # stop both process groups (safe twice)
 ```
 
-`up.sh` builds `../olb-contract`, the API, and the web and scorer apps with
-`NEXT_PUBLIC_API_URL=http://<PUBLIC_HOST>:<API_PORT>` and
-`NEXT_PUBLIC_VIEWER_URL=http://<PUBLIC_HOST>:<WEB_PORT>` baked into the client
-bundles. It runs the standalone Next output (`node .next/standalone/server.js`)
+The scorer is part of the web app at `/score`; there is no separate scorer
+process or port. `up.sh` builds `../olb-contract`, the API, and the web app with
+`NEXT_PUBLIC_API_URL=http://<PUBLIC_HOST>:<API_PORT>` baked into the client
+bundles, and runs the standalone Next output (`node .next/standalone/server.js`)
 with `HOSTNAME=0.0.0.0`, copying `.next/static` and `public` into the standalone
 directory first. The web server also receives
 `API_URL=http://127.0.0.1:<API_PORT>` for its server components.
 
-Startup order is API, then web, then scorer. The API starts with `DATABASE_URL`,
-`PORT` and `CORS_ORIGIN` covering the three public URLs, and applies pending
-migrations on boot. `up.sh` waits for `/health`, then for `/` on both Next apps,
-so a printed URL has already answered. It refuses to start when any of the three
-ports is already listening (`ss -ltn`), before building anything.
+Startup order is API, then web. The API starts with `DATABASE_URL`, `PORT` and
+`CORS_ORIGIN` covering the web and API public URLs, and applies pending
+migrations on boot. `up.sh` waits for `/health`, then for `/` on the web app, so
+a printed URL has already answered. It refuses to start when `:3000` or `:3001`
+is already listening (`ss -ltn`), before building anything; a legacy scorer on
+`:3002` is no longer checked or started.
 
 With `SEED=1` (the default) it then runs `npm run seed:league` and
 `API_URL=http://127.0.0.1:<API_PORT> npm run seed:full`. Both are idempotent: on
@@ -164,16 +165,27 @@ an already seeded database the catalog is unchanged and the completed game print
 | --- | --- | --- |
 | `PUBLIC_HOST` | `arch-server.tailc46b97.ts.net` | MagicDNS name baked into the client URLs and printed at the end |
 | `API_PORT` | `3001` | API listener and public URL port |
-| `WEB_PORT` | `3000` | Viewer listener and public URL port |
-| `SCORER_PORT` | `3002` | Scorer listener and public URL port |
+| `WEB_PORT` | `3000` | Web listener and public URL port (portal and `/score`) |
 | `DATABASE_URL` | `postgres://postgres:olb@127.0.0.1:5432/olb` | API and seed connection string |
 | `SEED` | `1` | `0` skips both seed commands |
-| `RUN_DIR` | `deploy/run` | PID files (`api.pid`, `web.pid`, `scorer.pid`) |
-| `LOG_DIR` | `deploy/logs` | `api.log`, `web.log`, `scorer.log` |
+| `RUN_DIR` | `deploy/run` | PID files (`api.pid`, `web.pid`) |
+| `LOG_DIR` | `deploy/logs` | `api.log`, `web.log` |
 
 The scripts bind `0.0.0.0` and leave the network alone: no `tailscale serve` and
-no firewall changes. The final lines print the three public URLs and the PID/log
+no firewall changes. The final lines print the web and API URLs and the PID/log
 paths. `deploy/run/` and `deploy/logs/` are gitignored.
+
+### Migrating from the separate scorer
+
+`./deploy/down.sh` also stops a `deploy/run/scorer.pid` left by the old
+three-process deploy and removes it, so a cutover does not leave `:3002` running.
+
+Local drafts require the merged scorer's export/import bundle
+(`olb.local-games/1`). The retired scorer predates that feature and has no
+export, so drafts already stored in its browser origin cannot be moved: re-enter
+them in `/score`, or finish them on the old scorer before the cutover. New
+drafts live in `/score` on the web origin and move through its Export/Import
+controls.
 
 ## Endpoints
 

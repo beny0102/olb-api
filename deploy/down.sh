@@ -2,8 +2,10 @@
 # Stop the processes started by deploy/up.sh.
 #
 # The PIDs written by up.sh are session leaders (setsid), so each app is stopped
-# as a process group. Missing or stale PID files are fine; running this twice is
-# safe. RUN_DIR must match the value used by up.sh.
+# as a process group. A scorer.pid left by the old three-process deploy is
+# stopped as well, so a cutover does not leave :3002 running. Missing or stale
+# PID files are fine; running this twice is safe. RUN_DIR must match the value
+# used by up.sh.
 set -euo pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -40,8 +42,9 @@ stop_pid() {
   stopped=$((stopped + 1))
 }
 
-# Reverse start order: apps first, API last.
-stop_pid scorer "$RUN_DIR/scorer.pid"
+# Reverse start order: apps first, API last. The scorer entry only exists on a
+# host that still has a PID file from the old three-process deployment.
+stop_pid "scorer (legacy)" "$RUN_DIR/scorer.pid"
 stop_pid web "$RUN_DIR/web.pid"
 stop_pid api "$RUN_DIR/api.pid"
 
