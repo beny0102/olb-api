@@ -162,11 +162,22 @@ without it the in-memory store is seeded on demand.
 export DATABASE_URL=postgres://postgres:olb@localhost:5432/olb
 npm run db:migrate     # apply pending migrations (also runs on API startup)
 npm run seed:league    # idempotent Liga Metropolitana seed
+npm run seed:full      # completed nine-inning game through the running API
 ```
 
 The seed creates one organization, one active season, two divisions, four teams
 with 18-player rosters and eight scheduled games. It is fictional and safe to
 run twice: every row is upserted by its natural key.
+
+`seed:full` runs against a live API (`API_URL`, default
+`http://127.0.0.1:3001`) after `seed:league`. It logs in as
+`SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`, creates a Tiburones-Faros game with
+`full` coverage and appends a deterministic nine-inning log (final 5-3), so
+`/seasons/:id/games`, `/seasons/:id/stats` and `/seasons/:id/leaders` show a
+played game with non-empty batting and pitching leaders. The marker venue
+`Estadio Metropolitano · seed full` makes it idempotent: a final game prints
+`already seeded` and a partial log resumes by event id without duplicating a
+play. It does not change `seed:league` or its scheduled games.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
