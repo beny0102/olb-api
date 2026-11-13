@@ -4,3 +4,5 @@ dist/
 *.log
 deploy/backups/
 deploy/.setup-token
+deploy/run/
+deploy/logs/

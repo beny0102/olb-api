@@ -128,6 +128,53 @@ A backup is not verified until it has been restored. Run the drill above after
 changing the schema, and compare the table counts and one game state before
 dropping the scratch database.
 
+## Deploy (local/tailnet)
+
+For a host that already has Node 22 and Postgres, `deploy/up.sh` builds and runs
+the stack as plain processes: no Docker, no root, no service manager. This is the
+manual deployment used on the tailnet host; the Compose package above stays the
+self-contained demo.
+
+```bash
+./deploy/up.sh                    # build, start and seed
+SEED=0 ./deploy/up.sh             # build and start, leave the database alone
+./deploy/down.sh                  # stop the three process groups (safe twice)
+```
+
+`up.sh` builds `../olb-contract`, the API, and the web and scorer apps with
+`NEXT_PUBLIC_API_URL=http://<PUBLIC_HOST>:<API_PORT>` and
+`NEXT_PUBLIC_VIEWER_URL=http://<PUBLIC_HOST>:<WEB_PORT>` baked into the client
+bundles. It runs the standalone Next output (`node .next/standalone/server.js`)
+with `HOSTNAME=0.0.0.0`, copying `.next/static` and `public` into the standalone
+directory first. The web server also receives
+`API_URL=http://127.0.0.1:<API_PORT>` for its server components.
+
+Startup order is API, then web, then scorer. The API starts with `DATABASE_URL`,
+`PORT` and `CORS_ORIGIN` covering the three public URLs, and applies pending
+migrations on boot. `up.sh` waits for `/health`, then for `/` on both Next apps,
+so a printed URL has already answered. It refuses to start when any of the three
+ports is already listening (`ss -ltn`), before building anything.
+
+With `SEED=1` (the default) it then runs `npm run seed:league` and
+`API_URL=http://127.0.0.1:<API_PORT> npm run seed:full`. Both are idempotent: on
+an already seeded database the catalog is unchanged and the completed game prints
+`already seeded`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PUBLIC_HOST` | `arch-server.tailc46b97.ts.net` | MagicDNS name baked into the client URLs and printed at the end |
+| `API_PORT` | `3001` | API listener and public URL port |
+| `WEB_PORT` | `3000` | Viewer listener and public URL port |
+| `SCORER_PORT` | `3002` | Scorer listener and public URL port |
+| `DATABASE_URL` | `postgres://postgres:olb@127.0.0.1:5432/olb` | API and seed connection string |
+| `SEED` | `1` | `0` skips both seed commands |
+| `RUN_DIR` | `deploy/run` | PID files (`api.pid`, `web.pid`, `scorer.pid`) |
+| `LOG_DIR` | `deploy/logs` | `api.log`, `web.log`, `scorer.log` |
+
+The scripts bind `0.0.0.0` and leave the network alone: no `tailscale serve` and
+no firewall changes. The final lines print the three public URLs and the PID/log
+paths. `deploy/run/` and `deploy/logs/` are gitignored.
+
 ## Endpoints
 
 | Method | Path | Purpose |
