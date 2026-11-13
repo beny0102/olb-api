@@ -129,7 +129,7 @@ fi
 # A dump is not a backup until it can be read back: list the archive before
 # publishing it, so a truncated or corrupt file never replaces a good one.
 if ! verify_dump; then
-  echo "pg_restore could not read the dump; leaving $tmp untouched" >&2
+  echo "pg_restore could not read the dump; no backup was published" >&2
   exit 1
 fi
 

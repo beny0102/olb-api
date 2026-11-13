@@ -109,7 +109,7 @@ file, and prunes by file age (`RETENTION_DAYS`, default 7). Before dumping it
 waits up to 30 seconds for `pg_isready`, so a backup taken while Postgres is
 still starting does not fail or capture a half-open server. After the dump it
 lists the archive with `pg_restore --list` and only then publishes the file; a
-truncated or unreadable dump exits non-zero and stays as `.partial`. A nightly
+truncated or unreadable dump exits non-zero and publishes nothing. A nightly
 cron job:
 
 ```cron
