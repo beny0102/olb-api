@@ -332,7 +332,11 @@ export function applyEvent(state: GameState, event: Event): GameState {
     case "game.end": {
       const reason = event.payload.reason;
       const status: GameStatus =
-        reason === "completed" ? "final" : reason === "forfeit" ? "forfeit" : "suspended";
+        reason === "completed" || reason === "shortened"
+          ? "final"
+          : reason === "forfeit"
+            ? "forfeit"
+            : "suspended";
       return { ...base, status, score: { ...event.payload.finalScore } };
     }
 

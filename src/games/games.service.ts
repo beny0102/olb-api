@@ -14,6 +14,7 @@ import {
   type GameBoxScore,
   type GameState,
 } from "../domain/fold.js";
+import { finishError } from "../domain/finish.js";
 import { computeStandings, type Standings } from "../domain/standings.js";
 import { isUuidV7, uuidv7 } from "../domain/uuid7.js";
 import { GameNotFoundError } from "../store/errors.js";
@@ -24,7 +25,16 @@ const MAX_NAME = 120;
 const MAX_VENUE = 200;
 const ISO_TIMESTAMP =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/;
-const END_REASONS = ["completed", "forfeit", "suspended", "rain", "darkness", "other"] as const;
+const END_REASONS = [
+  "completed",
+  "shortened",
+  "forfeit",
+  "suspended",
+  "rain",
+  "darkness",
+  "other",
+] as const;
+type EndReason = (typeof END_REASONS)[number];
 
 /**
  * A path id that is not a UUIDv7 cannot exist, so it is a 404 rather than a
@@ -88,6 +98,13 @@ function gameId(body: Record<string, unknown>): string {
     throw new BadRequestException("id must be a lowercase UUIDv7");
   }
   return value;
+}
+
+function endReason(value: unknown): EndReason {
+  if (typeof value !== "string" || !END_REASONS.includes(value as EndReason)) {
+    throw new BadRequestException(`reason must be one of: ${END_REASONS.join(", ")}`);
+  }
+  return value as EndReason;
 }
 
 function finalScore(value: unknown): { home: number; away: number } {
@@ -177,19 +194,12 @@ export class GamesService {
     }
 
     const input = assertObject(body ?? {});
-    const reason = input.reason;
-    if (typeof reason !== "string" || !END_REASONS.includes(reason as (typeof END_REASONS)[number])) {
-      throw new BadRequestException(`reason must be one of: ${END_REASONS.join(", ")}`);
-    }
+    const reason = endReason(input.reason);
 
     // The official score is the folded one unless the scorekeeper states it;
     // a mismatch means the fold and the scorekeeper disagree, so nothing is
     // appended and the conflict is surfaced instead of silently overwriting.
-    const folded = state.score;
-    const official = input.finalScore === undefined ? folded : finalScore(input.finalScore);
-    if (official.home !== folded.home || official.away !== folded.away) {
-      throw new ConflictException("finalScore does not match the folded score");
-    }
+    const official = this.checkFinish(state, reason, input.finalScore, true);
 
     await this.store.append(id, (seq) =>
       this.buildEvent(id, seq, {
@@ -257,6 +267,19 @@ export class GamesService {
     }
 
     try {
+      // A `game.end` appended through the generic endpoint is held to the same
+      // rules as `/finish`: the reason must be able to end the game now and the
+      // stated score must agree with the fold.
+      if (input.type === "game.end") {
+        const payload = input.payload;
+        if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+          throw new BadRequestException("invalid event: payload must be a JSON object");
+        }
+        const end = payload as Record<string, unknown>;
+        const events = await this.store.listEvents(id, 0);
+        this.checkFinish(foldEvents(events), endReason(end.reason), end.finalScore, false);
+      }
+
       const event = await this.store.append(id, (seq) => this.buildEvent(id, seq, input));
       await this.publishState(id);
       return event;
@@ -288,6 +311,31 @@ export class GamesService {
       map((update) => this.streamMessage("state", id, update.state)),
     );
     return merge(snapshot, updates);
+  }
+
+  /**
+   * Validates a game-ending score and reason against the fold. `/finish` treats
+   * a score mismatch as a conflict (the request contradicts the log); an
+   * explicit `game.end` event is rejected as a bad request instead.
+   */
+  private checkFinish(
+    state: GameState,
+    reason: EndReason,
+    scoreValue: unknown,
+    mismatchIsConflict: boolean,
+  ): { home: number; away: number } {
+    const folded = state.score;
+    const official = scoreValue === undefined ? folded : finalScore(scoreValue);
+    if (official.home !== folded.home || official.away !== folded.away) {
+      throw mismatchIsConflict
+        ? new ConflictException("finalScore does not match the folded score")
+        : new BadRequestException("finalScore does not match the folded score");
+    }
+
+    const error = finishError(state, reason);
+    if (error) throw new BadRequestException(error);
+
+    return official;
   }
 
   /**
