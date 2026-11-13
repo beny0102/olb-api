@@ -79,6 +79,14 @@ async function play(
     outs: 3,
   });
 
+  // A completed finish needs regulation distance; the remaining innings are
+  // scoreless so the standings totals stay exactly as requested.
+  for (let inning = 2; inning <= 9; inning += 1) {
+    for (const half of ["top", "bottom"] as const) {
+      await append(gameId, "inning.end", { inning, half, runsScored: 0, outs: 3 });
+    }
+  }
+
   await post(`/games/${gameId}/finish`)
     .send({ reason: "completed" })
     .expect(201);

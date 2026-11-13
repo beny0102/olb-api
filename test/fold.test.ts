@@ -108,6 +108,15 @@ describe("foldEvents", () => {
     expect(state.score).toEqual({ home: 3, away: 5 });
   });
 
+  it("treats shortened as a final game", () => {
+    const state = foldEvents([
+      start(),
+      event(1, "game.end", { reason: "shortened", finalScore: { home: 1, away: 0 } }),
+    ]);
+    expect(state.status).toBe("final");
+    expect(state.score).toEqual({ home: 1, away: 0 });
+  });
+
   it("skips an event type it does not know", () => {
     const future = event(1, "pitch_clock", {}) as unknown as Event;
     const state = foldEvents([start(), future]);

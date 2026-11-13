@@ -54,6 +54,43 @@ function ballInPlay(runsBattedIn: number) {
   };
 }
 
+function inningEnd(inning: number, half: "top" | "bottom") {
+  return {
+    type: "inning.end",
+    source: "human",
+    actor: { kind: "user", id: "usr_01HX" },
+    payload: { inning, half, runsScored: 0, outs: 3 },
+  };
+}
+
+const endEvent = (reason: string, finalScore: { home: number; away: number }) => ({
+  type: "game.end",
+  source: "human",
+  actor: { kind: "user", id: "usr_01HX" },
+  payload: { reason, finalScore },
+});
+
+/** Ends empty halves until the projection reaches the requested point. */
+async function advanceTo(
+  gameId: string,
+  inning: number,
+  half: "top" | "bottom",
+): Promise<void> {
+  const response = await request(app.getHttpServer()).get(`/games/${gameId}/state`).expect(200);
+  let at: number = response.body.inning;
+  let side: "top" | "bottom" = response.body.half;
+
+  while (at < inning || (at === inning && side === "top" && half === "bottom")) {
+    await append(gameId, inningEnd(at, side));
+    if (side === "top") {
+      side = "bottom";
+    } else {
+      side = "top";
+      at += 1;
+    }
+  }
+}
+
 describe("game lifecycle", () => {
   it("starts a scheduled game and refuses a second start", async () => {
     const gameId = await schedule();
@@ -90,6 +127,9 @@ describe("game lifecycle", () => {
       actor: { kind: "user", id: "usr_01HX" },
       payload: { inning: 1, half: "top", runsScored: 2, outs: 3 },
     });
+    // A completed finish needs regulation distance: the rest of the game is
+    // played out so the mismatch check, not the new length check, is exercised.
+    await advanceTo(gameId, 10, "top");
 
     const before = await request(app.getHttpServer())
       .get(`/games/${gameId}/events`)
@@ -121,7 +161,7 @@ describe("game lifecycle", () => {
       away: { runs: 2, hits: 1, errors: 0 },
       home: { runs: 0, hits: 0, errors: 0 },
     });
-    expect(box.body.away.linescore).toEqual([2, null, null, null, null, null, null, null, null]);
+    expect(box.body.away.linescore).toEqual([2, 0, 0, 0, 0, 0, 0, 0, 0]);
 
     await post(`/games/${gameId}/finish`)
       .send({ reason: "completed" })
@@ -140,6 +180,101 @@ describe("game lifecycle", () => {
     expect(finished.body.state).toMatchObject({
       status: "suspended",
       score: { home: 0, away: 1 },
+    });
+  });
+
+  it("finishes a completed game after nine innings", async () => {
+    const gameId = await schedule();
+    await start(gameId);
+    await append(gameId, ballInPlay(1));
+    await advanceTo(gameId, 10, "top");
+
+    const finished = await post(`/games/${gameId}/finish`)
+      .send({ reason: "completed" })
+      .expect(201);
+
+    expect(finished.body.state).toMatchObject({
+      status: "final",
+      score: { home: 0, away: 1 },
+    });
+  });
+
+  it("finishes a completed game after 8.5 innings when the home team is ahead", async () => {
+    const gameId = await schedule();
+    await start(gameId);
+    await advanceTo(gameId, 1, "bottom");
+    await append(gameId, ballInPlay(1));
+    await advanceTo(gameId, 9, "bottom");
+
+    const finished = await post(`/games/${gameId}/finish`)
+      .send({ reason: "completed" })
+      .expect(201);
+
+    expect(finished.body.state).toMatchObject({
+      status: "final",
+      score: { home: 1, away: 0 },
+    });
+  });
+
+  it("rejects a completed finish before regulation distance", async () => {
+    const gameId = await schedule();
+    await start(gameId);
+
+    await post(`/games/${gameId}/finish`)
+      .send({ reason: "completed" })
+      .expect(400);
+  });
+
+  it("finishes a shortened game after five innings", async () => {
+    const gameId = await schedule();
+    await start(gameId);
+    await advanceTo(gameId, 6, "top");
+
+    const finished = await post(`/games/${gameId}/finish`)
+      .send({ reason: "shortened" })
+      .expect(201);
+
+    expect(finished.body.state).toMatchObject({
+      status: "final",
+      score: { home: 0, away: 0 },
+    });
+  });
+
+  it("rejects a shortened finish before five innings", async () => {
+    const gameId = await schedule();
+    await start(gameId);
+
+    await post(`/games/${gameId}/finish`)
+      .send({ reason: "shortened" })
+      .expect(400);
+  });
+
+  it("validates a game.end appended through the events endpoint", async () => {
+    const gameId = await schedule();
+    await start(gameId);
+
+    await post(`/games/${gameId}/events`)
+      .send(endEvent("completed", { home: 0, away: 0 }))
+      .expect(400);
+
+    await post(`/games/${gameId}/events`)
+      .send(endEvent("mercy", { home: 0, away: 0 }))
+      .expect(400);
+
+    await advanceTo(gameId, 6, "top");
+
+    await post(`/games/${gameId}/events`)
+      .send(endEvent("shortened", { home: 1, away: 0 }))
+      .expect(400);
+
+    await post(`/games/${gameId}/events`)
+      .send(endEvent("shortened", { home: 0, away: 0 }))
+      .expect(201);
+
+    const state = await request(app.getHttpServer()).get(`/games/${gameId}/state`).expect(200);
+    expect(state.body).toMatchObject({
+      status: "final",
+      score: { home: 0, away: 0 },
     });
   });
 

@@ -57,6 +57,21 @@ function pitch(call: "B" | "S") {
   };
 }
 
+async function appendInningEnd(
+  gameId: string,
+  inning: number,
+  half: "top" | "bottom",
+): Promise<void> {
+  await post(`/games/${gameId}/events`)
+    .send({
+      type: "inning.end",
+      source: "human",
+      actor: { kind: "user", id: "usr_01HX" },
+      payload: { inning, half, runsScored: 0, outs: 3 },
+    })
+    .expect(201);
+}
+
 describe("GET /games/:id/stream", () => {
   it("opens text/event-stream with an initial snapshot", async () => {
     const gameId = await startedGame();
@@ -106,6 +121,26 @@ describe("GET /games/:id/stream", () => {
     await client.ready;
     await client.next();
 
+    // A run for the visitors, then nine scoreless innings so `completed` is
+    // allowed at regulation distance.
+    await post(`/games/${gameId}/events`)
+      .send({
+        type: "ball_in_play",
+        source: "human",
+        actor: { kind: "user", id: "usr_01HX" },
+        payload: {
+          batter: "0192f3a2-0001-7000-8000-000000000001",
+          code: "HR",
+          runsBattedIn: 1,
+        },
+      })
+      .expect(201);
+    for (let inning = 1; inning <= 9; inning += 1) {
+      await appendInningEnd(gameId, inning, "top");
+      await appendInningEnd(gameId, inning, "bottom");
+    }
+    for (let index = 0; index < 19; index += 1) await client.next();
+
     await post(`/games/${gameId}/finish`)
       .send({ reason: "completed" })
       .expect(201);
@@ -116,7 +151,7 @@ describe("GET /games/:id/stream", () => {
       state: { status: string };
     };
     expect(message.type).toBe("state");
-    expect(message.lastSeq).toBe(1);
+    expect(message.lastSeq).toBe(20);
     expect(message.state.status).toBe("final");
     client.close();
   });
