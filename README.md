@@ -7,8 +7,10 @@ and serves the game state derived from it.
 API, finished, and read back as a box score and standings derived from its
 event log. League operators can log in and manage the catalog through scoped
 admin endpoints. Game state can also be followed over SSE, and season leaders
-are folded from full-game logs. The legacy event/proposal writes are still open
-until scorer login lands in D2.
+are folded from full-game logs. Game and proposal writes require an authenticated
+membership with a covering scope; public reads stay open. The scorekeeper ships
+inside the web app at `/score`; the standalone `olb-scorer` is retired except for
+exporting drafts created before the cutover.
 
 ## Quick start
 
@@ -53,8 +55,10 @@ If you reuse a volume created by an earlier build, recreate it
 `deploy/` runs the whole stack with Docker Compose against the Postgres event
 store. The build context is the workspace root, because `@olb/contract` is a
 `file:../olb-contract` dependency. The package publishes alternate ports so it
-can run beside the manual `:3000/:3001/:3002` deployment without touching it:
-web `3200`, API `3201`, scorer `3202` and Postgres `55451` (all localhost).
+can run beside the manual `:3000/:3001` deployment without touching it:
+web `3200`, API `3201`, scorer `3202` and Postgres `55451` (all localhost). This
+compose package still starts the retired standalone scorer on `3202`; the current
+path is `deploy/up.sh`, which serves the scorer from the web app at `/score`.
 
 ```bash
 cp deploy/.env.example deploy/.env
@@ -201,12 +205,12 @@ work; plain `http://<host>:3000` is for direct/local access only.
 `./deploy/down.sh` also stops a `deploy/run/scorer.pid` left by the old
 three-process deploy and removes it, so a cutover does not leave `:3002` running.
 
-Local drafts require the merged scorer's export/import bundle
-(`olb.local-games/1`). The retired scorer predates that feature and has no
-export, so drafts already stored in its browser origin cannot be moved: re-enter
-them in `/score`, or finish them on the old scorer before the cutover. New
-drafts live in `/score` on the web origin and move through its Export/Import
-controls.
+Local drafts use the merged scorer's export/import bundle
+(`olb.local-games/1`). The retired scorer keeps an `/export` page at tag
+`v0.1.0-legacy`: run it on `:3002`, export each device's drafts, and import the
+JSON in `/score`. A device that cannot run that build must re-enter its drafts
+in `/score` or finish them on the old scorer before the cutover. New drafts live
+in `/score` on the web origin and move through its Export/Import controls.
 
 ## Endpoints
 
@@ -699,7 +703,6 @@ the table is ordered by winning percentage and then run differential.
 
 - Realtime resume from an event cursor (the SSE stream starts with a snapshot;
   clients still reconcile through `/games/:id/events?fromSeq=`)
-- Web and scorer login/admin interfaces
 - Advanced statistics such as ERA, fielding and situational splits
 - Postgres integration tests in CI
 
