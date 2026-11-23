@@ -1,0 +1,13 @@
+# Multi-replica front door. API paths are stripped of /api before reaching
+# olb-api; everything else is served by the web app. SSE responses must not be
+# buffered.
+:8080 {
+	handle_path /api/* {
+		reverse_proxy api:3001 {
+			flush_interval -1
+		}
+	}
+	handle {
+		reverse_proxy web:3000
+	}
+}

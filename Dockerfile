@@ -33,6 +33,9 @@ COPY --from=build /app/olb-api/dist ./olb-api/dist
 RUN npm cache clean --force
 
 WORKDIR /app/olb-api
+# The generated setup token defaults to deploy/.setup-token. The runtime image
+# runs as `node`, so create that directory with the right owner.
+RUN mkdir -p /app/olb-api/deploy && chown node:node /app/olb-api/deploy
 USER node
 EXPOSE 3001
 

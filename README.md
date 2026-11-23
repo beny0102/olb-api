@@ -87,6 +87,47 @@ The API applies pending migrations on startup; `seed-league` is safe to run
 twice. Demo credentials are listed under [Authentication and scopes](#authentication-and-scopes)
 and must be replaced before any deployment that is not local.
 
+### Multi-replica (optional)
+
+`deploy/docker-compose.scaled.yml` adds Redis and a Caddy gateway and runs two
+API replicas. It is separate from the `basic` package: the default deployment
+still needs no Redis. The gateway is the only published port; `olb-api` strips
+the `/api` prefix before proxying, so the public API stays at
+`<PUBLIC_ORIGIN>/api/...`.
+
+```bash
+cp deploy/.env.scaled.example deploy/.env
+
+# Set PUBLIC_ORIGIN to the address users actually open, then:
+docker compose -f deploy/docker-compose.scaled.yml up -d --build --scale api=2
+
+# Optional seed, after both replicas are healthy:
+docker compose -f deploy/docker-compose.scaled.yml exec --index 1 api \
+  node dist/scripts/seed-league.js
+docker compose -f deploy/docker-compose.scaled.yml exec --index 1 \
+  -e API_URL=http://127.0.0.1:3001 api node dist/scripts/seed-full-game.js
+```
+
+`PUBLIC_ORIGIN` is used by CORS and baked into the web bundle at build time; set
+it before `up` and rebuild the web image if it changes. `REQUIRE_REDIS=1` makes
+startup and login fail closed when Redis is missing or unreachable. If Redis
+goes down at runtime, live SSE degrades to the viewer's polling fallback; game
+data already in Postgres is unaffected. The API health endpoint reports
+`realtime.mode` and `realtime.connected`.
+
+Back up Postgres only; Redis holds no durable game data. In the scaled project
+the database container is `olb-scaled-db-1`:
+
+```bash
+BACKUP_CONTAINER=olb-scaled-db-1 ./deploy/backup.sh
+RESTORE_CONTAINER=olb-scaled-db-1 ./deploy/restore.sh <dump> --db olb_restore_check
+```
+
+The scaled compose has its own `olb-scaled_olb-pgdata` volume and its own
+project name, so `down -v` does not touch the basic package's database. To roll
+back to one replica, stop the scaled project and start `deploy/up.sh` against
+the database you intend to keep.
+
 ```bash
 # Stop the stack. The named volume is project-scoped, so this only removes
 # the deploy package's Postgres data, never the manual olb-postgres volume.
@@ -426,8 +467,9 @@ require a Bearer token and a membership that covers the target row. A missing
 token answers `401`; a token without the needed scope answers `403`; an invalid
 body answers `400`; an unknown reference answers `404`. Failed logins are
 throttled per address and email: five failures per fifteen-minute window, thirty
-per address, then `429` with `retryAfterSeconds`. The limiter is in-process and
-assumes one API replica.
+per address, then `429` with `retryAfterSeconds`. The default `basic` limiter is
+in-process and assumes one API replica; the scaled deployment sets `REDIS_URL`
+and shares counters across replicas (ADR 0011).
 
 | Method | Path | Required scope |
 | --- | --- | --- |
