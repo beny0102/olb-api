@@ -46,9 +46,10 @@ DATABASE_URL=postgres://postgres:olb@localhost:5432/olb npm start
 The schema is created on startup (`games`, `events`, `proposals` and the league
 catalog tables). The `games` row keeps the optional `scheduled_start` and
 `venue` columns next to the teams.
-If you reuse a volume created by an earlier build, recreate it
-(`docker compose down -v`, or remove the container): the DDL uses
-`CREATE TABLE IF NOT EXISTS` and does not add columns to an existing table.
+Pending migrations are applied on startup, including additive `ALTER TABLE`
+statements, so an existing volume is upgraded in place. A volume from before the
+migration ledger existed must be recreated (`docker compose down -v`, or remove
+the container) because it has no `schema_migrations` history.
 
 ## Deployment package
 
@@ -56,14 +57,14 @@ If you reuse a volume created by an earlier build, recreate it
 store. The build context is the workspace root, because `@olb/contract` is a
 `file:../olb-contract` dependency. The package publishes alternate ports so it
 can run beside the manual `:3000/:3001` deployment without touching it:
-web `3200`, API `3201`, scorer `3202` and Postgres `55451` (all localhost). This
-compose package still starts the retired standalone scorer on `3202`; the current
-path is `deploy/up.sh`, which serves the scorer from the web app at `/score`.
+web `3200`, API `3201` and Postgres `55451` (all localhost). The scorer is part
+of the web app at `/score`; this package does not start the retired standalone
+scorer. The production path is `deploy/up.sh`, which runs the same two processes.
 
 ```bash
 cp deploy/.env.example deploy/.env
 
-# Build and start Postgres, API, web and scorer.
+# Build and start Postgres, API and web.
 docker compose -f deploy/docker-compose.yml up -d --build
 
 # Idempotent league catalog, demo users and memberships.
@@ -80,7 +81,7 @@ docker compose -f deploy/docker-compose.yml run --rm \
 | <http://localhost:3200> | League portal |
 | <http://localhost:3200/stats> | Standings and season leaders |
 | <http://localhost:3201/health> | Liveness, contract version and storage kind |
-| <http://localhost:3202> | Offline-first scorer |
+| <http://localhost:3200/score> | Offline-first scorer, served by the web app |
 
 The API applies pending migrations on startup; `seed-league` is safe to run
 twice. Demo credentials are listed under [Authentication and scopes](#authentication-and-scopes)
@@ -275,7 +276,7 @@ play. It does not change `seed:league` or its scheduled games.
 | GET | `/seasons/:id` | Season with its competitions |
 | GET | `/seasons/:id/competitions` | Competitions of a season |
 | GET | `/competitions/:id/teams` | Team seasons in a competition |
-| GET | `/team-seasons/:id` | Team season with its roster |
+| GET | `/team-seasons/:id` | Team season with its roster; names hidden unless consented |
 | GET | `/seasons/:id/games?competitionId=` | Games with status and score |
 | GET | `/seasons/:id/standings?competitionId=` | Standings grouped by competition |
 | GET | `/seasons/:id/leaders?competitionId=` | Batting and pitching leaders from full-game logs |
@@ -294,6 +295,13 @@ they have no play-by-play. Batting exposes PA, AB, H, HR, RBI, R, BB, SO, HBP
 and AVG (three decimals, `null` when AB is zero); pitching exposes pitches, SO,
 BB and appearances. Unsupported fields such as ERA are not invented. An unknown
 season, competition, team season or competition filter answers `404`.
+
+Player names are private by default. Public rosters and leaders return `#jersey`
+or the position instead, with empty `firstName`/`lastName`; an organization
+admin grants a per-player `public_name` consent before the full name appears.
+Authenticated admin and scorer screens read the full roster from
+`GET /admin/team-seasons/:id`. Deleting a player with `?force=true` removes the
+identity and roster rows while the event log keeps only the opaque player id.
 
 
 ## Authentication and scopes
@@ -413,10 +421,13 @@ can still receive one later.
 
 ### Admin writes
 
-Reads stay public. Every admin write requires a Bearer token and a membership
-that covers the target row. A missing token answers `401`; a token without the
-needed scope answers `403`; an invalid body answers `400`; an unknown reference
-answers `404`.
+Public reads stay public. Authenticated admin reads and every admin write
+require a Bearer token and a membership that covers the target row. A missing
+token answers `401`; a token without the needed scope answers `403`; an invalid
+body answers `400`; an unknown reference answers `404`. Failed logins are
+throttled per address and email: five failures per fifteen-minute window, thirty
+per address, then `429` with `retryAfterSeconds`. The limiter is in-process and
+assumes one API replica.
 
 | Method | Path | Required scope |
 | --- | --- | --- |
@@ -425,6 +436,8 @@ answers `404`.
 | POST | `/admin/teams` | `org_admin` of `organizationId` |
 | POST | `/admin/team-seasons` | `org_admin` of the season's organization, or `competition_admin` of `competitionId` |
 | POST | `/admin/players` | `org_admin` of `organizationId` |
+| GET | `/admin/team-seasons/:id` | any membership in the team season's organization |
+| GET/POST/DELETE | `/admin/players/:id/consent` | `org_admin` of the player's organization |
 | POST | `/admin/roster-entries` | `team_admin`/`scorer` of the team season, or a competition/organization admin above it |
 | POST | `/admin/games` | `competition_admin` of the competition, or `team_admin`/`scorer` of either team season |
 
