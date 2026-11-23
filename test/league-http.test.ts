@@ -108,8 +108,10 @@ describe("league reads over the seeded catalog", () => {
     expect(response.body.roster).toHaveLength(18);
     expect(response.body.roster[0]).toMatchObject({
       jersey: "2",
-      firstName: "Alejandro",
-      lastName: "Aguilar",
+      firstName: "",
+      lastName: "",
+      namePublic: false,
+      displayName: "#2",
       primaryPosition: "C",
       status: "active",
     });

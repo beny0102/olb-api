@@ -141,6 +141,11 @@ export class AdminController {
     return this.admin.deleteTeamSeason(auth, id);
   }
 
+  @Get("team-seasons/:id")
+  getTeamSeason(@CurrentAuth() auth: AuthContext, @Param("id") id: string) {
+    return this.admin.getTeamSeason(auth, id);
+  }
+
   @Post("players")
   createPlayer(@CurrentAuth() auth: AuthContext, @Body() body: unknown) {
     return this.admin.createPlayer(auth, body);
@@ -153,6 +158,25 @@ export class AdminController {
     @Body() body: unknown,
   ) {
     return this.admin.updatePlayer(auth, id, body);
+  }
+
+  @Get("players/:id/consent")
+  getNameConsent(@CurrentAuth() auth: AuthContext, @Param("id") id: string) {
+    return this.admin.getNameConsent(auth, id);
+  }
+
+  @Post("players/:id/consent")
+  grantNameConsent(
+    @CurrentAuth() auth: AuthContext,
+    @Param("id") id: string,
+    @Body() body: unknown,
+  ) {
+    return this.admin.grantNameConsent(auth, id, body);
+  }
+
+  @Delete("players/:id/consent")
+  revokeNameConsent(@CurrentAuth() auth: AuthContext, @Param("id") id: string) {
+    return this.admin.revokeNameConsent(auth, id);
   }
 
   @Delete("players/:id")

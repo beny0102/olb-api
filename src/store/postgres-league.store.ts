@@ -10,6 +10,8 @@ import type {
   LeagueStore,
   OrganizationInput,
   OrganizationRecord,
+  PlayerConsentInput,
+  PlayerConsentRecord,
   PlayerInput,
   PlayerRecord,
   RosterEntryInput,
@@ -78,7 +80,19 @@ interface PlayerRow {
   organization_id: string;
   first_name: string;
   last_name: string;
+  name_public: boolean;
   created_at: Date;
+}
+
+interface PlayerConsentRow {
+  id: string;
+  player_id: string;
+  scope: string;
+  guardian_name: string;
+  relationship: string | null;
+  granted_at: Date;
+  revoked_at: Date | null;
+  recorded_by: string | null;
 }
 
 interface RosterEntryRow {
@@ -92,6 +106,7 @@ interface RosterEntryRow {
   status: string;
   first_name: string;
   last_name: string;
+  name_public: boolean;
 }
 
 interface GameRow {
@@ -184,8 +199,19 @@ function toPlayer(row: PlayerRow): PlayerRecord {
     organizationId: row.organization_id,
     firstName: row.first_name,
     lastName: row.last_name,
+    namePublic: row.name_public,
     createdAt: row.created_at.toISOString(),
   };
+}
+
+function fullName(row: { first_name: string; last_name: string }): string {
+  return `${row.first_name} ${row.last_name}`.trim();
+}
+
+function rosterDisplayName(row: RosterEntryRow): string {
+  if (row.name_public) return fullName(row);
+  if (row.jersey) return `#${row.jersey}`;
+  return row.primary_position || "Jugador";
 }
 
 function toRosterEntry(row: RosterEntryRow): RosterEntryRecord {
@@ -200,6 +226,21 @@ function toRosterEntry(row: RosterEntryRow): RosterEntryRecord {
     status: row.status as RosterEntryRecord["status"],
     firstName: row.first_name,
     lastName: row.last_name,
+    namePublic: row.name_public,
+    displayName: rosterDisplayName(row),
+  };
+}
+
+function toPlayerConsent(row: PlayerConsentRow): PlayerConsentRecord {
+  return {
+    id: row.id,
+    playerId: row.player_id,
+    scope: row.scope as PlayerConsentRecord["scope"],
+    guardianName: row.guardian_name,
+    relationship: row.relationship,
+    grantedAt: row.granted_at.toISOString(),
+    revokedAt: row.revoked_at ? row.revoked_at.toISOString() : null,
+    recordedBy: row.recorded_by,
   };
 }
 
@@ -388,14 +429,21 @@ export class PostgresLeagueStore implements LeagueStore {
 
   async upsertPlayer(input: PlayerInput): Promise<PlayerRecord> {
     const { rows } = await this.pool.query<PlayerRow>(
-      `INSERT INTO players (id, organization_id, first_name, last_name, created_at)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO players (id, organization_id, first_name, last_name, name_public, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (id) DO UPDATE SET
          organization_id = EXCLUDED.organization_id,
          first_name = EXCLUDED.first_name,
          last_name = EXCLUDED.last_name
-       RETURNING id, organization_id, first_name, last_name, created_at`,
-      [input.id, input.organizationId, input.firstName, input.lastName, input.createdAt],
+       RETURNING id, organization_id, first_name, last_name, name_public, created_at`,
+      [
+        input.id,
+        input.organizationId,
+        input.firstName,
+        input.lastName,
+        input.namePublic,
+        input.createdAt,
+      ],
     );
     return toPlayer(rows[0]!);
   }
@@ -420,7 +468,7 @@ export class PostgresLeagueStore implements LeagueStore {
        SELECT u.id, u.team_season_id, u.player_id, u.jersey, u.primary_position,
               u.eligibility_start::text AS eligibility_start,
               u.eligibility_end::text AS eligibility_end,
-              u.status, p.first_name, p.last_name
+              u.status, p.first_name, p.last_name, p.name_public
          FROM upsert u
          JOIN players p ON p.id = u.player_id`,
       [
@@ -585,7 +633,7 @@ export class PostgresLeagueStore implements LeagueStore {
   async updatePlayer(input: PlayerInput): Promise<PlayerRecord | null> {
     const { rows } = await this.pool.query<PlayerRow>(
       `UPDATE players SET first_name = $2, last_name = $3 WHERE id = $1
-       RETURNING id, organization_id, first_name, last_name, created_at`,
+       RETURNING id, organization_id, first_name, last_name, name_public, created_at`,
       [input.id, input.firstName, input.lastName],
     );
     return rows[0] ? toPlayer(rows[0]) : null;
@@ -603,7 +651,7 @@ export class PostgresLeagueStore implements LeagueStore {
        SELECT u.id, u.team_season_id, u.player_id, u.jersey, u.primary_position,
               u.eligibility_start::text AS eligibility_start,
               u.eligibility_end::text AS eligibility_end,
-              u.status, p.first_name, p.last_name
+              u.status, p.first_name, p.last_name, p.name_public
          FROM updated u
          JOIN players p ON p.id = u.player_id`,
       [
@@ -818,7 +866,7 @@ export class PostgresLeagueStore implements LeagueStore {
 
   async getPlayer(id: string): Promise<PlayerRecord | null> {
     const { rows } = await this.pool.query<PlayerRow>(
-      `SELECT id, organization_id, first_name, last_name, created_at
+      `SELECT id, organization_id, first_name, last_name, name_public, created_at
          FROM players WHERE id = $1`,
       [id],
     );
@@ -829,7 +877,7 @@ export class PostgresLeagueStore implements LeagueStore {
     organizationId: string,
   ): Promise<PlayerRecord[]> {
     const { rows } = await this.pool.query<PlayerRow>(
-      `SELECT id, organization_id, first_name, last_name, created_at
+      `SELECT id, organization_id, first_name, last_name, name_public, created_at
          FROM players
         WHERE organization_id = $1
         ORDER BY last_name ASC, first_name ASC, id ASC`,
@@ -844,7 +892,7 @@ export class PostgresLeagueStore implements LeagueStore {
     lastName: string,
   ): Promise<PlayerRecord | null> {
     const { rows } = await this.pool.query<PlayerRow>(
-      `SELECT id, organization_id, first_name, last_name, created_at
+      `SELECT id, organization_id, first_name, last_name, name_public, created_at
          FROM players
         WHERE organization_id = $1
           AND lower(first_name) = lower($2)
@@ -856,12 +904,80 @@ export class PostgresLeagueStore implements LeagueStore {
     return rows[0] ? toPlayer(rows[0]) : null;
   }
 
+  async getActiveNameConsent(playerId: string): Promise<PlayerConsentRecord | null> {
+    const { rows } = await this.pool.query<PlayerConsentRow>(
+      `SELECT id, player_id, scope, guardian_name, relationship,
+              granted_at, revoked_at, recorded_by
+         FROM player_consents
+        WHERE player_id = $1 AND scope = 'public_name' AND revoked_at IS NULL
+        ORDER BY granted_at DESC, id DESC
+        LIMIT 1`,
+      [playerId],
+    );
+    return rows[0] ? toPlayerConsent(rows[0]) : null;
+  }
+
+  async createNameConsent(input: PlayerConsentInput): Promise<PlayerConsentRecord> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rows } = await client.query<PlayerConsentRow>(
+        `INSERT INTO player_consents
+           (id, player_id, scope, guardian_name, relationship, granted_at, revoked_at, recorded_by)
+         VALUES ($1, $2, 'public_name', $3, $4, $5, NULL, $6)
+         RETURNING id, player_id, scope, guardian_name, relationship,
+                   granted_at, revoked_at, recorded_by`,
+        [
+          input.id,
+          input.playerId,
+          input.guardianName,
+          input.relationship,
+          input.grantedAt,
+          input.recordedBy,
+        ],
+      );
+      await client.query("UPDATE players SET name_public = true WHERE id = $1", [
+        input.playerId,
+      ]);
+      await client.query("COMMIT");
+      return toPlayerConsent(rows[0]!);
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async revokeNameConsents(playerId: string, revokedAt: string): Promise<number> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const { rowCount } = await client.query(
+        `UPDATE player_consents
+            SET revoked_at = $2
+          WHERE player_id = $1 AND scope = 'public_name' AND revoked_at IS NULL`,
+        [playerId, revokedAt],
+      );
+      await client.query("UPDATE players SET name_public = false WHERE id = $1", [
+        playerId,
+      ]);
+      await client.query("COMMIT");
+      return rowCount ?? 0;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async listRoster(teamSeasonId: string): Promise<RosterEntryRecord[]> {
     const { rows } = await this.pool.query<RosterEntryRow>(
       `SELECT re.id, re.team_season_id, re.player_id, re.jersey, re.primary_position,
               re.eligibility_start::text AS eligibility_start,
               re.eligibility_end::text AS eligibility_end,
-              re.status, p.first_name, p.last_name
+              re.status, p.first_name, p.last_name, p.name_public
          FROM roster_entries re
          JOIN players p ON p.id = re.player_id
         WHERE re.team_season_id = $1
@@ -878,7 +994,7 @@ export class PostgresLeagueStore implements LeagueStore {
       `SELECT re.id, re.team_season_id, re.player_id, re.jersey, re.primary_position,
               re.eligibility_start::text AS eligibility_start,
               re.eligibility_end::text AS eligibility_end,
-              re.status, p.first_name, p.last_name
+              re.status, p.first_name, p.last_name, p.name_public
          FROM roster_entries re
          JOIN players p ON p.id = re.player_id
         WHERE re.player_id = $1
@@ -893,7 +1009,7 @@ export class PostgresLeagueStore implements LeagueStore {
       `SELECT re.id, re.team_season_id, re.player_id, re.jersey, re.primary_position,
               re.eligibility_start::text AS eligibility_start,
               re.eligibility_end::text AS eligibility_end,
-              re.status, p.first_name, p.last_name
+              re.status, p.first_name, p.last_name, p.name_public
          FROM roster_entries re
          JOIN players p ON p.id = re.player_id
         WHERE re.id = $1`,
@@ -963,7 +1079,7 @@ export class PostgresLeagueStore implements LeagueStore {
 
       for (const row of input.rows) {
         const { rows: playerRows } = await client.query<PlayerRow>(
-          `SELECT id, organization_id, first_name, last_name, created_at
+          `SELECT id, organization_id, first_name, last_name, name_public, created_at
              FROM players
             WHERE organization_id = $1
               AND lower(first_name) = lower($2)
@@ -983,13 +1099,14 @@ export class PostgresLeagueStore implements LeagueStore {
               organizationId: input.organizationId,
               firstName: row.firstName,
               lastName: row.lastName,
+              namePublic: false,
               createdAt: now,
             };
           } else {
             const { rows: inserted } = await client.query<PlayerRow>(
-              `INSERT INTO players (id, organization_id, first_name, last_name, created_at)
-               VALUES ($1, $2, $3, $4, $5)
-               RETURNING id, organization_id, first_name, last_name, created_at`,
+              `INSERT INTO players (id, organization_id, first_name, last_name, name_public, created_at)
+               VALUES ($1, $2, $3, $4, false, $5)
+               RETURNING id, organization_id, first_name, last_name, name_public, created_at`,
               [id, input.organizationId, row.firstName, row.lastName, now],
             );
             player = toPlayer(inserted[0]!);
@@ -1000,7 +1117,7 @@ export class PostgresLeagueStore implements LeagueStore {
           `SELECT re.id, re.team_season_id, re.player_id, re.jersey, re.primary_position,
                   re.eligibility_start::text AS eligibility_start,
                   re.eligibility_end::text AS eligibility_end,
-                  re.status, p.first_name, p.last_name
+                  re.status, p.first_name, p.last_name, p.name_public
              FROM roster_entries re
              JOIN players p ON p.id = re.player_id
             WHERE re.team_season_id = $1

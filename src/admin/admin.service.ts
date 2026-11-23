@@ -513,6 +513,19 @@ export class AdminService {
     return { deleted: true };
   }
 
+  async getTeamSeason(auth: AuthContext, id: string) {
+    const teamSeason = await this.requireTeamSeason(id);
+    const season = await this.requireSeason(teamSeason.seasonId);
+    const organizations = await this.access.organizationsFor(auth);
+    if (!organizations.some((organization) => organization.id === season.organizationId)) {
+      throw new ForbiddenException("organization membership required");
+    }
+    return {
+      teamSeason,
+      roster: await this.league.listRoster(teamSeason.id),
+    };
+  }
+
   async createPlayer(auth: AuthContext, body: unknown): Promise<PlayerRecord> {
     const input = assertObject(body);
     const organizationId = requiredUuid(input, "organizationId");
@@ -524,6 +537,7 @@ export class AdminService {
       organizationId,
       firstName: requiredString(input, "firstName"),
       lastName: requiredString(input, "lastName"),
+      namePublic: false,
       createdAt: new Date().toISOString(),
     });
   }
@@ -546,6 +560,54 @@ export class AdminService {
     });
     if (!updated) throw new NotFoundException(`player ${id} not found`);
     return updated;
+  }
+
+  async getNameConsent(auth: AuthContext, id: string) {
+    const player = await this.requirePlayer(id);
+    this.scopes.assertOrgAdmin(auth, player.organizationId);
+    const consent = await this.league.getActiveNameConsent(player.id);
+    return { playerId: player.id, namePublic: player.namePublic, consent };
+  }
+
+  async grantNameConsent(auth: AuthContext, id: string, body: unknown) {
+    const player = await this.requirePlayer(id);
+    this.scopes.assertOrgAdmin(auth, player.organizationId);
+
+    const active = await this.league.getActiveNameConsent(player.id);
+    if (active) {
+      throw new ConflictException("player already has an active public-name consent");
+    }
+
+    const input = assertObject(body);
+    assertKnownFields(input, ["guardianName", "relationship"]);
+    try {
+      return await this.league.createNameConsent({
+        id: uuidv7(),
+        playerId: player.id,
+        scope: "public_name",
+        guardianName: requiredString(input, "guardianName"),
+        relationship: optionalString(input, "relationship", 80),
+        grantedAt: new Date().toISOString(),
+        revokedAt: null,
+        recordedBy: auth.user.id,
+      });
+    } catch (error) {
+      if ((error as { code?: string }).code === "23505") {
+        throw new ConflictException("player already has an active public-name consent");
+      }
+      throw error;
+    }
+  }
+
+  async revokeNameConsent(auth: AuthContext, id: string) {
+    const player = await this.requirePlayer(id);
+    this.scopes.assertOrgAdmin(auth, player.organizationId);
+
+    const revoked = await this.league.revokeNameConsents(
+      player.id,
+      new Date().toISOString(),
+    );
+    return { playerId: player.id, namePublic: false, revoked };
   }
 
   async deletePlayer(

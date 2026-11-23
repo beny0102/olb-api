@@ -116,7 +116,15 @@ export class LeagueService {
     assertLeagueId(id, "team season");
     const teamSeason = await this.league.getTeamSeason(id);
     if (!teamSeason) throw new NotFoundException(`team season ${id} not found`);
-    return { teamSeason, roster: await this.league.listRoster(teamSeason.id) };
+    const roster = await this.league.listRoster(teamSeason.id);
+    return {
+      teamSeason,
+      roster: roster.map((entry) =>
+        entry.namePublic
+          ? entry
+          : { ...entry, firstName: "", lastName: "", displayName: entry.displayName },
+      ),
+    };
   }
 
   async listGames(seasonId: string, competitionId?: string): Promise<LeagueGameView[]> {

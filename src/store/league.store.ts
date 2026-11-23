@@ -67,10 +67,25 @@ export interface PlayerInput {
   organizationId: string;
   firstName: string;
   lastName: string;
+  /** Public name publication is opt-in and false until a consent exists. */
+  namePublic: boolean;
   createdAt: string;
 }
 
 export type PlayerRecord = PlayerInput;
+
+export interface PlayerConsentInput {
+  id: string;
+  playerId: string;
+  scope: "public_name";
+  guardianName: string;
+  relationship: string | null;
+  grantedAt: string;
+  revokedAt: string | null;
+  recordedBy: string | null;
+}
+
+export type PlayerConsentRecord = PlayerConsentInput;
 
 export interface RosterEntryInput {
   id: string;
@@ -86,6 +101,9 @@ export interface RosterEntryInput {
 export interface RosterEntryRecord extends RosterEntryInput {
   firstName: string;
   lastName: string;
+  namePublic: boolean;
+  /** Full name for internal readers, jersey label for public readers. */
+  displayName: string;
 }
 
 export interface CreateLeagueGameInput {
@@ -228,6 +246,9 @@ export interface LeagueStore {
   getPlayer(id: string): Promise<PlayerRecord | null>;
   /** All players of the organization, ordered by last name then first name. */
   listPlayersByOrganization(organizationId: string): Promise<PlayerRecord[]>;
+  getActiveNameConsent(playerId: string): Promise<PlayerConsentRecord | null>;
+  createNameConsent(input: PlayerConsentInput): Promise<PlayerConsentRecord>;
+  revokeNameConsents(playerId: string, revokedAt: string): Promise<number>;
   findPlayerByName(
     organizationId: string,
     firstName: string,

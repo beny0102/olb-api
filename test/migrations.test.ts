@@ -1,6 +1,7 @@
 import pg from "pg";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { seedAuth, SEED_AUTH_EMAILS } from "../src/auth/auth-seed.js";
+import { SEED_TEAM_SEASON_IDS } from "../src/scripts/league-seed.js";
 import { PostgresAuthStore } from "../src/auth/postgres-auth.store.js";
 import { seedLeague } from "../src/scripts/league-seed.js";
 import { runMigrations } from "../src/store/migrations.js";
@@ -46,13 +47,21 @@ describe.skipIf(!databaseUrl)("migrations and seed (postgres)", () => {
   });
 
   it("runs migrations twice, then seeds twice without duplicates", async () => {
-    expect(await runMigrations(pool)).toEqual(["001_league_domain", "002_auth"]);
+    expect(await runMigrations(pool)).toEqual([
+      "001_league_domain",
+      "002_auth",
+      "003_player_privacy",
+    ]);
     expect(await runMigrations(pool)).toEqual([]);
 
     const { rows: versions } = await pool.query<{ version: string }>(
       `SELECT version FROM schema_migrations ORDER BY version`,
     );
-    expect(versions.map((row) => row.version)).toEqual(["001_league_domain", "002_auth"]);
+    expect(versions.map((row) => row.version)).toEqual([
+      "001_league_domain",
+      "002_auth",
+      "003_player_privacy",
+    ]);
 
     const authTables = await pool.query<{ table_name: string }>(
       `SELECT table_name FROM information_schema.tables
@@ -64,6 +73,19 @@ describe.skipIf(!databaseUrl)("migrations and seed (postgres)", () => {
       "memberships",
       "sessions",
       "users",
+    ]);
+
+    const privacy = await pool.query<{ column_name: string; table_name: string }>(
+      `SELECT table_name, column_name FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND ((table_name = 'players' AND column_name = 'name_public')
+            OR (table_name = 'player_consents' AND column_name IN ('guardian_name', 'revoked_at')))
+        ORDER BY table_name, column_name`,
+    );
+    expect(privacy.rows).toEqual([
+      { table_name: "player_consents", column_name: "guardian_name" },
+      { table_name: "player_consents", column_name: "revoked_at" },
+      { table_name: "players", column_name: "name_public" },
     ]);
 
     const store = new PostgresLeagueStore(pool);
@@ -100,7 +122,7 @@ describe.skipIf(!databaseUrl)("migrations and seed (postgres)", () => {
       sessions: 0,
       // Tiburones has two roles: team_admin and scorer.
       memberships: 5,
-      migration_rows: 2,
+      migration_rows: 3,
     });
 
     for (const email of SEED_AUTH_EMAILS) {
@@ -120,5 +142,39 @@ describe.skipIf(!databaseUrl)("migrations and seed (postgres)", () => {
     ).flat();
     expect(teams).toHaveLength(4);
     expect(await store.listGames(seasons[0]!.id)).toHaveLength(8);
+
+    const teamSeasonId = SEED_TEAM_SEASON_IDS[0]!;
+    const [hidden] = await store.listRoster(teamSeasonId);
+    expect(hidden).toMatchObject({
+      namePublic: false,
+      displayName: "#2",
+      firstName: "Alejandro",
+      lastName: "Aguilar",
+    });
+
+    await store.createNameConsent({
+      id: "0192f3d0-0000-7000-8000-000000009999",
+      playerId: hidden!.playerId,
+      scope: "public_name",
+      guardianName: "Marta Sosa",
+      relationship: "madre",
+      grantedAt: new Date().toISOString(),
+      revokedAt: null,
+      recordedBy: null,
+    });
+    const [published] = await store.listRoster(teamSeasonId);
+    expect(published).toMatchObject({
+      namePublic: true,
+      displayName: "Alejandro Aguilar",
+    });
+
+    expect(
+      await store.revokeNameConsents(hidden!.playerId, new Date().toISOString()),
+    ).toBe(1);
+    const [revoked] = await store.listRoster(teamSeasonId);
+    expect(revoked).toMatchObject({
+      namePublic: false,
+      displayName: "#2",
+    });
   });
 });

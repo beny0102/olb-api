@@ -107,6 +107,7 @@ describe("admin catalog reads", () => {
         "firstName",
         "id",
         "lastName",
+        "namePublic",
         "organizationId",
       ]);
       expect(player.organizationId).toBe(SEED_ORGANIZATION_ID);

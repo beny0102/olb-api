@@ -441,6 +441,7 @@ export async function runLeagueImport(
         organizationId,
         firstName: entry.player.firstName,
         lastName: entry.player.lastName,
+        namePublic: false,
         createdAt: now,
       };
 

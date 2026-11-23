@@ -343,6 +343,7 @@ export async function seedLeague(store: LeagueStore): Promise<void> {
         organizationId: SEED_ORGANIZATION_ID,
         firstName,
         lastName,
+        namePublic: false,
         createdAt: SEED_CREATED_AT,
       });
 

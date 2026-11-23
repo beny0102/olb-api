@@ -299,6 +299,57 @@ describe("league admin writes", () => {
     );
   });
 
+  it("publishes a player name only while guardian consent is active", async () => {
+    const publicRoster = async () => {
+      const response = await request(app.getHttpServer())
+        .get(`/team-seasons/${SEED_TEAM_SEASON_IDS[0]}`)
+        .expect(200);
+      return response.body.roster.find((entry: { playerId: string }) => entry.playerId === playerId);
+    };
+
+    expect(await publicRoster()).toMatchObject({
+      firstName: "",
+      lastName: "",
+      namePublic: false,
+      displayName: "#99",
+    });
+
+    const granted = await post(`/admin/players/${playerId}/consent`, adminToken, {
+      guardianName: "Marta Sosa",
+      relationship: "madre",
+    }).expect(201);
+    expect(granted.body).toMatchObject({
+      playerId,
+      scope: "public_name",
+      guardianName: "Marta Sosa",
+      revokedAt: null,
+    });
+
+    await post(`/admin/players/${playerId}/consent`, adminToken, {
+      guardianName: "Otro Tutor",
+    }).expect(409);
+
+    expect(await publicRoster()).toMatchObject({
+      firstName: "Daniel",
+      lastName: "Sosa",
+      namePublic: true,
+      displayName: "Daniel Sosa",
+    });
+
+    const revoked = await request(app.getHttpServer())
+      .delete(`/admin/players/${playerId}/consent`)
+      .set("authorization", `Bearer ${adminToken}`)
+      .expect(200);
+    expect(revoked.body).toEqual({ playerId, namePublic: false, revoked: 1 });
+
+    expect(await publicRoster()).toMatchObject({
+      firstName: "",
+      lastName: "",
+      namePublic: false,
+      displayName: "#99",
+    });
+  });
+
   it("answers 403 when a scorer adds a roster entry", async () => {
     await post("/admin/roster-entries", scorerToken, {
       teamSeasonId: SEED_TEAM_SEASON_IDS[0],

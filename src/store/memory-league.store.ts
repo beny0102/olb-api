@@ -10,6 +10,8 @@ import type {
   LeagueStore,
   OrganizationInput,
   OrganizationRecord,
+  PlayerConsentInput,
+  PlayerConsentRecord,
   PlayerInput,
   PlayerRecord,
   RosterEntryInput,
@@ -37,6 +39,17 @@ function cloneMap<K, V extends object>(source: Map<K, V>): Map<K, V> {
 function restoreMap<K, V>(target: Map<K, V>, source: Map<K, V>): void {
   target.clear();
   for (const [key, value] of source) target.set(key, value);
+}
+
+function publicRosterLabel(
+  record: RosterEntryInput,
+  firstName: string,
+  lastName: string,
+  namePublic: boolean,
+): string {
+  if (namePublic) return `${firstName} ${lastName}`.trim();
+  if (record.jersey) return `#${record.jersey}`;
+  return record.primaryPosition || "Jugador";
 }
 
 function compareJersey(a: RosterEntryRecord, b: RosterEntryRecord): number {
@@ -69,6 +82,7 @@ export class MemoryLeagueStore implements LeagueStore {
   private readonly teams = new Map<string, TeamRecord>();
   private readonly teamSeasons = new Map<string, TeamSeasonInput>();
   private readonly players = new Map<string, PlayerRecord>();
+  private readonly playerConsents = new Map<string, PlayerConsentRecord>();
   private readonly rosterEntries = new Map<string, RosterEntryInput>();
   private readonly games = new Map<string, LeagueGameRecord>();
   private readonly gameSummaries = new Map<string, GameSummaryRecord>();
@@ -343,6 +357,46 @@ export class MemoryLeagueStore implements LeagueStore {
       .map((record) => ({ ...record }));
   }
 
+  async getActiveNameConsent(playerId: string): Promise<PlayerConsentRecord | null> {
+    const active = [...this.playerConsents.values()]
+      .filter(
+        (row) =>
+          row.playerId === playerId &&
+          row.scope === "public_name" &&
+          row.revokedAt === null,
+      )
+      .sort(
+        (a, b) =>
+          compareText(b.grantedAt, a.grantedAt) || compareText(b.id, a.id),
+      )[0];
+    return active ? { ...active } : null;
+  }
+
+  async createNameConsent(input: PlayerConsentInput): Promise<PlayerConsentRecord> {
+    const record: PlayerConsentRecord = { ...input };
+    this.playerConsents.set(record.id, record);
+    const player = this.players.get(input.playerId);
+    if (player) this.players.set(player.id, { ...player, namePublic: true });
+    return { ...record };
+  }
+
+  async revokeNameConsents(playerId: string, revokedAt: string): Promise<number> {
+    let revoked = 0;
+    for (const [id, consent] of this.playerConsents) {
+      if (
+        consent.playerId === playerId &&
+        consent.scope === "public_name" &&
+        consent.revokedAt === null
+      ) {
+        this.playerConsents.set(id, { ...consent, revokedAt });
+        revoked += 1;
+      }
+    }
+    const player = this.players.get(playerId);
+    if (player) this.players.set(playerId, { ...player, namePublic: false });
+    return revoked;
+  }
+
   async listRoster(teamSeasonId: string): Promise<RosterEntryRecord[]> {
     return [...this.rosterEntries.values()]
       .filter((row) => row.teamSeasonId === teamSeasonId)
@@ -432,6 +486,7 @@ export class MemoryLeagueStore implements LeagueStore {
         organizationId: input.organizationId,
         firstName: row.firstName,
         lastName: row.lastName,
+        namePublic: false,
         createdAt: new Date().toISOString(),
       };
       const playerCreated = player === null;
@@ -518,6 +573,7 @@ export class MemoryLeagueStore implements LeagueStore {
       teams: cloneMap(this.teams),
       teamSeasons: cloneMap(this.teamSeasons),
       players: cloneMap(this.players),
+      playerConsents: cloneMap(this.playerConsents),
       rosterEntries: cloneMap(this.rosterEntries),
       games: cloneMap(this.games),
       gameSummaries: cloneMap(this.gameSummaries),
@@ -532,6 +588,7 @@ export class MemoryLeagueStore implements LeagueStore {
       restoreMap(this.teams, snapshot.teams);
       restoreMap(this.teamSeasons, snapshot.teamSeasons);
       restoreMap(this.players, snapshot.players);
+      restoreMap(this.playerConsents, snapshot.playerConsents);
       restoreMap(this.rosterEntries, snapshot.rosterEntries);
       restoreMap(this.games, snapshot.games);
       restoreMap(this.gameSummaries, snapshot.gameSummaries);
@@ -556,10 +613,15 @@ export class MemoryLeagueStore implements LeagueStore {
 
   private enrichRosterEntry(record: RosterEntryInput): RosterEntryRecord {
     const player = this.players.get(record.playerId);
+    const firstName = player?.firstName ?? "";
+    const lastName = player?.lastName ?? "";
+    const namePublic = player?.namePublic ?? false;
     return {
       ...record,
-      firstName: player?.firstName ?? "",
-      lastName: player?.lastName ?? "",
+      firstName,
+      lastName,
+      namePublic,
+      displayName: publicRosterLabel(record, firstName, lastName, namePublic),
     };
   }
 

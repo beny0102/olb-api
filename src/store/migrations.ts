@@ -181,6 +181,28 @@ CREATE INDEX IF NOT EXISTS memberships_user ON memberships (user_id);
 CREATE INDEX IF NOT EXISTS memberships_scope ON memberships (scope_type, scope_id);
 `,
   },
+  {
+    version: "003_player_privacy",
+    sql: `
+ALTER TABLE players
+  ADD COLUMN IF NOT EXISTS name_public boolean NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS player_consents (
+  id uuid PRIMARY KEY,
+  player_id uuid NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+  scope text NOT NULL CHECK (scope IN ('public_name')),
+  guardian_name text NOT NULL,
+  relationship text,
+  granted_at timestamptz NOT NULL,
+  revoked_at timestamptz,
+  recorded_by uuid REFERENCES users(id) ON DELETE SET NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS player_consents_active
+  ON player_consents (player_id, scope)
+  WHERE revoked_at IS NULL;
+`,
+  },
 ];
 
 /**

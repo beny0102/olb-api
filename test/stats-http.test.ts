@@ -148,7 +148,7 @@ describe("season leaders and stats", () => {
 
     expect(body.seasonId).toBe(SEED_SEASON_ID);
     expect(row(body.batting, player(100))).toMatchObject({
-      player: "Alejandro Aguilar",
+      player: "#2",
       team: "Tiburones",
       pa: 1,
       ab: 0,
@@ -157,7 +157,7 @@ describe("season leaders and stats", () => {
       avg: null,
     });
     expect(row(body.batting, player(101))).toMatchObject({
-      player: "Bruno Bermúdez",
+      player: "#7",
       team: "Tiburones",
       pa: 3,
       ab: 3,
@@ -165,7 +165,7 @@ describe("season leaders and stats", () => {
       avg: 0.333,
     });
     expect(row(body.batting, player(102))).toMatchObject({
-      player: "Camilo Castillo",
+      player: "#11",
       team: "Tiburones",
       pa: 1,
       ab: 1,
@@ -199,7 +199,7 @@ describe("season leaders and stats", () => {
 
     expect(row(body.pitching, PITCHER)).toEqual({
       playerId: PITCHER,
-      player: "Lucas Galván",
+      player: "#41",
       teamSeasonId: "0192f3d0-0000-7000-8000-000000000031",
       team: "Faros",
       jersey: "41",

@@ -102,8 +102,8 @@ function average(hits: number, atBats: number): number | null {
   return Math.round((hits / atBats) * 1000) / 1000;
 }
 
-function playerName(entry: RosterEntryRecord): string {
-  return `${entry.firstName} ${entry.lastName}`.trim();
+function publicName(entry: RosterEntryRecord): string {
+  return entry.displayName || "Jugador";
 }
 
 /**
@@ -276,7 +276,7 @@ export class StatsService {
 function identity(entry: RosterEntryRecord, teamSeason: TeamSeasonRecord): PlayerIdentity {
   return {
     playerId: entry.playerId,
-    player: playerName(entry),
+    player: publicName(entry),
     teamSeasonId: teamSeason.id,
     team: teamSeason.teamName,
     jersey: entry.jersey,
