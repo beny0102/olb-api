@@ -177,4 +177,37 @@ describe.skipIf(!databaseUrl)("migrations and seed (postgres)", () => {
       displayName: "#2",
     });
   });
+
+  it("serializes concurrent migration runs", async () => {
+    const raceSchema = `${schema}_race`;
+    await admin.query(`DROP SCHEMA IF EXISTS "${raceSchema}" CASCADE`);
+    await admin.query(`CREATE SCHEMA "${raceSchema}"`);
+    const raceOptions = `-c search_path=${raceSchema}`;
+    const first = new pg.Pool({ connectionString: databaseUrl, options: raceOptions });
+    const second = new pg.Pool({ connectionString: databaseUrl, options: raceOptions });
+
+    try {
+      const [firstRun, secondRun] = await Promise.all([
+        runMigrations(first),
+        runMigrations(second),
+      ]);
+      const applied = [...firstRun, ...secondRun];
+      expect(applied.sort()).toEqual([
+        "001_league_domain",
+        "002_auth",
+        "003_player_privacy",
+      ]);
+
+      const { rows } = await first.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM schema_migrations`,
+      );
+      expect(rows[0]?.count).toBe(3);
+    } finally {
+      await first.end();
+      await second.end();
+      await admin
+        .query(`DROP SCHEMA IF EXISTS "${raceSchema}" CASCADE`)
+        .catch(() => undefined);
+    }
+  });
 });

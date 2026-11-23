@@ -295,19 +295,16 @@ export class GamesService {
 
   /**
    * Initial snapshot followed by every state published after an append. The
-   * service's replay buffer closes the gap between the read and the
-   * subscription; the publish cursor filters states the snapshot already
-   * covers without hiding a first event at seq 0.
+   * replay buffer closes the gap between the read and the subscription;
+   * filtering by `lastSeq` drops states the snapshot already covers, including
+   * stale states arriving late from another API replica.
    */
   async streamGame(id: string): Promise<Observable<GameStreamMessage>> {
-    // Capture the publish cursor before reading the snapshot. An append in
-    // between is replayed and may duplicate the snapshot, but can never be
-    // lost; a cursor read afterwards could hide a genuine first event at seq 0.
-    const cursor = this.stream.cursor(id);
     const snapshotState = await this.getState(id);
+    this.stream.observe(id, snapshotState.lastSeq);
     const snapshot = of(this.streamMessage("snapshot", id, snapshotState));
     const updates = this.stream.watch(id).pipe(
-      filter((update) => update.revision > cursor),
+      filter((update) => update.state.lastSeq > snapshotState.lastSeq),
       map((update) => this.streamMessage("state", id, update.state)),
     );
     return merge(snapshot, updates);
@@ -353,13 +350,13 @@ export class GamesService {
     id: string,
     result: GameRecord & { state: GameState },
   ): Promise<GameRecord & { state: GameState }> {
-    this.stream.publish(id, result.state);
+    await this.stream.publish(id, result.state);
     return result;
   }
 
   private async publishState(id: string): Promise<void> {
     const events = await this.store.listEvents(id, 0);
-    this.stream.publish(id, foldEvents(events));
+    await this.stream.publish(id, foldEvents(events));
   }
 
   private streamMessage(

@@ -3,51 +3,55 @@ import { describe, expect, it } from "vitest";
 import { LoginRateLimiter } from "../src/auth/login-rate-limit.js";
 
 describe("login rate limiter", () => {
-  it("blocks the sixth failed attempt in the window", () => {
+  it("blocks the sixth failed attempt in the window", async () => {
     const limiter = new LoginRateLimiter();
     const now = 1_000_000;
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      limiter.assertAllowed("127.0.0.1", "player@example.test", now);
-      limiter.recordFailure("127.0.0.1", "player@example.test", now);
+      await limiter.assertAllowed("127.0.0.1", "player@example.test", now);
+      await limiter.recordFailure("127.0.0.1", "player@example.test", now);
     }
 
-    expect(() =>
+    await expect(
       limiter.assertAllowed("127.0.0.1", "player@example.test", now + 1),
-    ).toThrow(HttpException);
+    ).rejects.toBeInstanceOf(HttpException);
   });
 
-  it("opens a fresh bucket after the window", () => {
+  it("opens a fresh bucket after the window", async () => {
     const limiter = new LoginRateLimiter();
     const now = 1_000_000;
     for (let attempt = 0; attempt < 5; attempt += 1) {
-      limiter.recordFailure("127.0.0.1", "player@example.test", now);
+      await limiter.recordFailure("127.0.0.1", "player@example.test", now);
     }
 
-    expect(() =>
-      limiter.assertAllowed("127.0.0.1", "player@example.test", now + 15 * 60 * 1000),
-    ).not.toThrow();
+    await expect(
+      limiter.assertAllowed(
+        "127.0.0.1",
+        "player@example.test",
+        now + 15 * 60 * 1000,
+      ),
+    ).resolves.toBeUndefined();
   });
 
-  it("clears the identity and address buckets on success", () => {
+  it("clears the identity and address buckets on success", async () => {
     const limiter = new LoginRateLimiter();
     for (let attempt = 0; attempt < 4; attempt += 1) {
-      limiter.recordFailure("127.0.0.1", "player@example.test");
+      await limiter.recordFailure("127.0.0.1", "player@example.test");
     }
-    limiter.recordSuccess("127.0.0.1", "player@example.test");
+    await limiter.recordSuccess("127.0.0.1", "player@example.test");
 
-    expect(() =>
+    await expect(
       limiter.assertAllowed("127.0.0.1", "player@example.test"),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it("limits a single address across different emails", () => {
+  it("limits a single address across different emails", async () => {
     const limiter = new LoginRateLimiter();
     for (let attempt = 0; attempt < 30; attempt += 1) {
-      limiter.recordFailure("127.0.0.1", `player${attempt}@example.test`);
+      await limiter.recordFailure("127.0.0.1", `player${attempt}@example.test`);
     }
 
-    expect(() =>
+    await expect(
       limiter.assertAllowed("127.0.0.1", "another@example.test"),
-    ).toThrow(HttpException);
+    ).rejects.toBeInstanceOf(HttpException);
   });
 });

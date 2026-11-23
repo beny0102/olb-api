@@ -5,7 +5,10 @@ import { AdminService } from "./admin/admin.service.js";
 import { CatalogAccessService } from "./admin/catalog-access.service.js";
 import { AuthController } from "./auth/auth.controller.js";
 import { AuthGuard, LogoutGuard } from "./auth/auth.guard.js";
-import { LoginRateLimiter } from "./auth/login-rate-limit.js";
+import {
+  createLoginRateLimiter,
+  LOGIN_RATE_LIMITER,
+} from "./auth/login-rate-limit.js";
 import { AuthService } from "./auth/auth.service.js";
 import { AUTH_STORE, type AuthStore } from "./auth/auth.store.js";
 import { MemoryAuthStore } from "./auth/memory-auth.store.js";
@@ -15,6 +18,7 @@ import { HealthController } from "./health.controller.js";
 import { GameAccessService } from "./games/game-access.service.js";
 import { GamesController } from "./games/games.controller.js";
 import { GamesService } from "./games/games.service.js";
+import { createGameStreamBus, GAME_STREAM_BUS } from "./games/game-stream.bus.js";
 import { GameStreamService } from "./games/game-stream.service.js";
 import { ProposalsController } from "./games/proposals.controller.js";
 import { ProposalsService } from "./games/proposals.service.js";
@@ -59,12 +63,30 @@ import { TransferService } from "./transfer/transfer.service.js";
   providers: [
     GamesService,
     GameAccessService,
+    {
+      provide: GAME_STREAM_BUS,
+      useFactory: () =>
+        createGameStreamBus(
+          process.env.REDIS_URL,
+          process.env.REQUIRE_REDIS === "1",
+        ),
+    },
     GameStreamService,
     ProposalsService,
     LeagueService,
     StatsService,
     AuthService,
-    LoginRateLimiter,
+    {
+      provide: LOGIN_RATE_LIMITER,
+      useFactory: async () => {
+        const limiter = createLoginRateLimiter(
+          process.env.REDIS_URL,
+          process.env.REQUIRE_REDIS === "1",
+        );
+        await limiter.start();
+        return limiter;
+      },
+    },
     AuthGuard,
     LogoutGuard,
     ScopesService,

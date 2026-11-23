@@ -12,7 +12,10 @@ import {
 import { CurrentAuth, AuthGuard, LogoutGuard } from "./auth.guard.js";
 import type { AuthContext } from "./auth.service.js";
 import { AuthService } from "./auth.service.js";
-import { LoginRateLimiter } from "./login-rate-limit.js";
+import {
+  LOGIN_RATE_LIMITER,
+  type LoginRateLimiterContract,
+} from "./login-rate-limit.js";
 
 function loginEmail(body: unknown): string {
   if (typeof body !== "object" || body === null || !("email" in body)) return "";
@@ -24,21 +27,22 @@ function loginEmail(body: unknown): string {
 export class AuthController {
   constructor(
     @Inject(AuthService) private readonly auth: AuthService,
-    @Inject(LoginRateLimiter) private readonly limiter: LoginRateLimiter,
+    @Inject(LOGIN_RATE_LIMITER)
+    private readonly limiter: LoginRateLimiterContract,
   ) {}
 
   @Post("login")
   @HttpCode(200)
   async login(@Body() body: unknown, @Ip() ip: string) {
     const email = loginEmail(body);
-    this.limiter.assertAllowed(ip, email);
+    await this.limiter.assertAllowed(ip, email);
     try {
       const result = await this.auth.login(body);
-      this.limiter.recordSuccess(ip, email);
+      await this.limiter.recordSuccess(ip, email);
       return result;
     } catch (error) {
       if (error instanceof UnauthorizedException) {
-        this.limiter.recordFailure(ip, email);
+        await this.limiter.recordFailure(ip, email);
       }
       throw error;
     }

@@ -28,6 +28,7 @@
     "@nestjs/platform-express": "^11.0.0",
     "@olb/contract": "file:../olb-contract",
     "pg": "^8.13.0",
+    "redis": "^6.4.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },

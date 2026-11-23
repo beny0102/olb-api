@@ -206,43 +206,59 @@ CREATE UNIQUE INDEX IF NOT EXISTS player_consents_active
 ];
 
 /**
+ * Serialises concurrent migration runners. API replicas start together, so two
+ * processes must not read the same pending set and race the DDL. The lock is
+ * session-scoped and released automatically if the connection dies.
+ */
+const MIGRATION_LOCK_KEY = 730124001;
+
+/**
  * Applies every pending migration in its own transaction. The public
  * `schema_migrations` table is the ledger; a failed migration rolls back the
  * DDL and leaves no version row behind.
  */
 export async function runMigrations(pool: pg.Pool): Promise<string[]> {
-  await pool.query(
-    `CREATE TABLE IF NOT EXISTS schema_migrations (
-       version text PRIMARY KEY,
-       applied_at timestamptz NOT NULL DEFAULT now()
-     )`,
-  );
+  const client = await pool.connect();
+  try {
+    await client.query(`SELECT pg_advisory_lock($1)`, [MIGRATION_LOCK_KEY]);
+    await client.query(
+      `CREATE TABLE IF NOT EXISTS schema_migrations (
+         version text PRIMARY KEY,
+         applied_at timestamptz NOT NULL DEFAULT now()
+       )`,
+    );
 
-  const { rows } = await pool.query<{ version: string }>(
-    `SELECT version FROM schema_migrations`,
-  );
-  const applied = new Set(rows.map((row) => row.version));
-  const appliedNow: string[] = [];
+    // Re-read after taking the lock: another replica may have applied the
+    // whole set while this process was waiting.
+    const { rows } = await client.query<{ version: string }>(
+      `SELECT version FROM schema_migrations`,
+    );
+    const applied = new Set(rows.map((row) => row.version));
+    const appliedNow: string[] = [];
 
-  for (const migration of MIGRATIONS) {
-    if (applied.has(migration.version)) continue;
+    for (const migration of MIGRATIONS) {
+      if (applied.has(migration.version)) continue;
 
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      await client.query(migration.sql);
-      await client.query(`INSERT INTO schema_migrations (version) VALUES ($1)`, [
-        migration.version,
-      ]);
-      await client.query("COMMIT");
-      appliedNow.push(migration.version);
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
+      try {
+        await client.query("BEGIN");
+        await client.query(migration.sql);
+        await client.query(
+          `INSERT INTO schema_migrations (version) VALUES ($1)`,
+          [migration.version],
+        );
+        await client.query("COMMIT");
+        appliedNow.push(migration.version);
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => undefined);
+        throw error;
+      }
     }
-  }
 
-  return appliedNow;
+    return appliedNow;
+  } finally {
+    await client
+      .query(`SELECT pg_advisory_unlock($1)`, [MIGRATION_LOCK_KEY])
+      .catch(() => undefined);
+    client.release();
+  }
 }
