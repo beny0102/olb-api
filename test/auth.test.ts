@@ -97,6 +97,20 @@ describe("auth login", () => {
       .send({ email: ADMIN_EMAIL })
       .expect(400);
   });
+
+  it("answers 429 after five failed attempts for one identity", async () => {
+    const email = "blocked@liga-metropolitana.olb";
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await login(email, "wrong-password").expect(401);
+    }
+
+    const blocked = await login(email, "wrong-password").expect(429);
+    expect(blocked.body).toMatchObject({
+      statusCode: 429,
+      message: "too many login attempts",
+    });
+    expect(blocked.body.retryAfterSeconds).toBeGreaterThan(0);
+  });
 });
 
 describe("guarded auth endpoints", () => {

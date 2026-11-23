@@ -5,6 +5,7 @@ import { AdminService } from "./admin/admin.service.js";
 import { CatalogAccessService } from "./admin/catalog-access.service.js";
 import { AuthController } from "./auth/auth.controller.js";
 import { AuthGuard, LogoutGuard } from "./auth/auth.guard.js";
+import { LoginRateLimiter } from "./auth/login-rate-limit.js";
 import { AuthService } from "./auth/auth.service.js";
 import { AUTH_STORE, type AuthStore } from "./auth/auth.store.js";
 import { MemoryAuthStore } from "./auth/memory-auth.store.js";
@@ -63,6 +64,7 @@ import { TransferService } from "./transfer/transfer.service.js";
     LeagueService,
     StatsService,
     AuthService,
+    LoginRateLimiter,
     AuthGuard,
     LogoutGuard,
     ScopesService,
