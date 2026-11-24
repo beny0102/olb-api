@@ -412,13 +412,13 @@ describe("a nine-inning box score", () => {
   it("derives matching totals and a nine-entry linescore", () => {
     const box = foldBoxScore(gameId, log);
 
-    expect(box.home).toEqual({
+    expect(box.home).toMatchObject({
       runs: 4,
       hits: 8,
       errors: 1,
       linescore: [0, 1, 0, 2, 0, 1, 0, 0, 0],
     });
-    expect(box.away).toEqual({
+    expect(box.away).toMatchObject({
       runs: 2,
       hits: 6,
       errors: 0,

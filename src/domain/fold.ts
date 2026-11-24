@@ -450,11 +450,54 @@ export function foldEvents(events: readonly Event[], from: GameState = initialSt
   return { ...state, lastSeq };
 }
 
+export interface PlayerBattingLine {
+  playerId: string;
+  name: string;
+  jersey: string | null;
+  position: string | null;
+  pa: number;
+  ab: number;
+  r: number;
+  h: number;
+  doubles: number;
+  triples: number;
+  hr: number;
+  rbi: number;
+  bb: number;
+  so: number;
+  hbp: number;
+  avg: number | null;
+}
+
+export interface PlayerPitchingLine {
+  playerId: string;
+  name: string;
+  jersey: string | null;
+  position: string | null;
+  pitches: number;
+  outs: number;
+  battersFaced: number;
+  h: number;
+  r: number;
+  bb: number;
+  so: number;
+}
+
+/** The public-safe identity a game's roster contributes to its box score. */
+export interface BoxPlayerReference {
+  playerId: string;
+  name: string;
+  jersey: string | null;
+  position: string | null;
+}
+
 export interface TeamBoxScore {
   runs: number;
   hits: number;
   errors: number;
   linescore: (number | null)[];
+  batting: PlayerBattingLine[];
+  pitching: PlayerPitchingLine[];
 }
 
 export interface GameBoxScore {
@@ -464,8 +507,32 @@ export interface GameBoxScore {
   away: TeamBoxScore;
 }
 
+/**
+ * A play code is a hit only when it starts with `S`, `D`, `T` or `HR` and the
+ * next character is not a letter. That keeps sacrifices such as `SAC` and
+ * `SF` out of the hit count.
+ */
 function isHit(code: string): boolean {
-  return /^(S|D|T|HR)/i.test(code);
+  return /^(?:HR|[SDT](?![A-Z]))/i.test(code);
+}
+
+function isSacrifice(code: string): boolean {
+  return /^(?:SAC|SF|SH)/i.test(code);
+}
+
+function isWalk(call: string, count: { balls: number; strikes: number }): boolean {
+  return (call === "B" || call === "P" || call === "I") && count.balls >= 3;
+}
+
+function isStrikeout(call: string, count: { balls: number; strikes: number }): boolean {
+  return (
+    (call === "C" || call === "S" || call === "Q" || call === "T") && count.strikes >= 2
+  );
+}
+
+function average(hits: number, atBats: number): number | null {
+  if (atBats === 0) return null;
+  return Math.round((hits / atBats) * 1000) / 1000;
 }
 
 function isError(code: string, fielders: readonly { role: string }[]): boolean {
@@ -479,18 +546,197 @@ function isError(code: string, fielders: readonly { role: string }[]): boolean {
  * `runsScored` each `inning.end` states. An inning that was never ended stays
  * null, because inventing a zero would hide an unfinished half.
  */
-export function foldBoxScore(gameId: string, events: readonly Event[]): GameBoxScore {
+export function foldBoxScore(
+  gameId: string,
+  events: readonly Event[],
+  players: ReadonlyMap<string, BoxPlayerReference> = new Map(),
+): GameBoxScore {
   let state = initialState;
   const hits: Record<TeamSide, number> = { home: 0, away: 0 };
   const errors: Record<TeamSide, number> = { home: 0, away: 0 };
   const innings: Record<TeamSide, Array<{ inning: number; runs: number }>> = { home: [], away: [] };
+  const batting: Record<TeamSide, Map<string, PlayerBattingLine>> = {
+    home: new Map(),
+    away: new Map(),
+  };
+  const pitching: Record<TeamSide, Map<string, PlayerPitchingLine>> = {
+    home: new Map(),
+    away: new Map(),
+  };
+  const lineupOrder: Record<TeamSide, Map<string, number>> = {
+    home: new Map(),
+    away: new Map(),
+  };
+
+  const identity = (playerId: string) => {
+    const ref = players.get(playerId);
+    return {
+      playerId,
+      name: ref?.name ?? "",
+      jersey: ref?.jersey ?? null,
+      position: ref?.position ?? null,
+    };
+  };
+
+  const battingFor = (playerId: string, side: TeamSide): PlayerBattingLine => {
+    let line = batting[side].get(playerId);
+    if (!line) {
+      line = {
+        ...identity(playerId),
+        pa: 0,
+        ab: 0,
+        r: 0,
+        h: 0,
+        doubles: 0,
+        triples: 0,
+        hr: 0,
+        rbi: 0,
+        bb: 0,
+        so: 0,
+        hbp: 0,
+        avg: null,
+      };
+      batting[side].set(playerId, line);
+    }
+    return line;
+  };
+
+  const pitchingFor = (playerId: string, side: TeamSide): PlayerPitchingLine => {
+    let line = pitching[side].get(playerId);
+    if (!line) {
+      line = {
+        ...identity(playerId),
+        pitches: 0,
+        outs: 0,
+        battersFaced: 0,
+        h: 0,
+        r: 0,
+        bb: 0,
+        so: 0,
+      };
+      pitching[side].set(playerId, line);
+    }
+    return line;
+  };
+
+  const creditForcedRun = (runner: string | null, pitcher: PlayerPitchingLine | null) => {
+    if (runner === null) return;
+    battingFor(runner, state.battingTeam).r += 1;
+    if (pitcher) pitcher.r += 1;
+  };
 
   for (const event of appliedEvents(events)) {
-    if (event.type === "ball_in_play") {
-      const batting = state.battingTeam;
-      if (isHit(event.payload.code)) hits[batting] += 1;
-      if (isError(event.payload.code, event.payload.fielders ?? [])) {
-        errors[otherSide(batting)] += 1;
+    const before = state;
+    const battingSide = before.battingTeam;
+    const fieldingSide = otherSide(battingSide);
+
+    if (event.type === "lineup.set") {
+      event.payload.battingOrder.forEach((slot, index) => {
+        lineupOrder[event.payload.team].set(slot.player, index);
+      });
+    } else if (event.type === "substitution") {
+      const current = before.lineups?.[event.payload.team];
+      const found = current?.battingOrder.findIndex(
+        (slot) => slot.player === event.payload.playerOut,
+      );
+      const index = found !== undefined && found >= 0 ? found : event.payload.battingSlot - 1;
+      lineupOrder[event.payload.team].set(event.payload.playerIn, index);
+    } else if (event.type === "pitch") {
+      const { pitcher, batter, call } = event.payload;
+      const pitcherLine = pitchingFor(pitcher, fieldingSide);
+      pitcherLine.pitches += 1;
+
+      const walk = isWalk(call, before.count);
+      const strikeout = isStrikeout(call, before.count);
+      if (walk || strikeout || call === "H") {
+        const batterLine = battingFor(batter, battingSide);
+        batterLine.pa += 1;
+        pitcherLine.battersFaced += 1;
+
+        if (walk) {
+          batterLine.bb += 1;
+          pitcherLine.bb += 1;
+          if (before.bases.first && before.bases.second && before.bases.third) {
+            creditForcedRun(before.bases.third, pitcherLine);
+          }
+        } else if (call === "H") {
+          batterLine.hbp += 1;
+          if (before.bases.first && before.bases.second && before.bases.third) {
+            creditForcedRun(before.bases.third, pitcherLine);
+          }
+        } else {
+          batterLine.ab += 1;
+          batterLine.so += 1;
+          pitcherLine.so += 1;
+          pitcherLine.outs += 1;
+        }
+      }
+    } else if (event.type === "ball_in_play") {
+      const { batter, code, runsBattedIn, runnersAdvanced, fielders } = event.payload;
+      const hit = isHit(code);
+      const sacrifice = isSacrifice(code);
+      const batterLine = battingFor(batter, battingSide);
+      const pitcherLine = before.pitcher ? pitchingFor(before.pitcher, fieldingSide) : null;
+
+      batterLine.pa += 1;
+      if (!sacrifice) batterLine.ab += 1;
+      if (hit) {
+        batterLine.h += 1;
+        if (/^D/i.test(code)) batterLine.doubles += 1;
+        if (/^T/i.test(code)) batterLine.triples += 1;
+        if (/^HR/i.test(code)) batterLine.hr += 1;
+        if (pitcherLine) pitcherLine.h += 1;
+        hits[battingSide] += 1;
+      }
+      batterLine.rbi += runsBattedIn;
+      if (pitcherLine) {
+        pitcherLine.battersFaced += 1;
+        pitcherLine.outs += (fielders ?? []).filter((fielder) => fielder.role === "putout").length;
+      }
+      if (isError(code, fielders ?? [])) errors[fieldingSide] += 1;
+
+      for (const advance of runnersAdvanced ?? []) {
+        if (advance.to !== "H") continue;
+        battingFor(advance.player, battingSide).r += 1;
+        if (pitcherLine) pitcherLine.r += 1;
+      }
+
+      // A home run scores its batter even when the log only states the RBI.
+      // Do not count the batter twice when an explicit advance already did.
+      const batterScored = (runnersAdvanced ?? []).some(
+        (advance) => advance.player === batter && advance.to === "H",
+      );
+      const automaticRun = /^HR/i.test(code) && !batterScored ? 1 : 0;
+      if (automaticRun > 0) {
+        batterLine.r += 1;
+        if (pitcherLine) pitcherLine.r += 1;
+      }
+      if (
+        pitcherLine &&
+        (runnersAdvanced?.length ?? 0) === 0 &&
+        runsBattedIn > automaticRun
+      ) {
+        pitcherLine.r += runsBattedIn - automaticRun;
+      }
+    } else if (event.type === "interference") {
+      const { batter } = event.payload;
+      const batterLine = battingFor(batter, battingSide);
+      const pitcherLine = before.pitcher ? pitchingFor(before.pitcher, fieldingSide) : null;
+      batterLine.pa += 1;
+      if (pitcherLine) pitcherLine.battersFaced += 1;
+      if (before.bases.first && before.bases.second && before.bases.third) {
+        creditForcedRun(before.bases.third, pitcherLine);
+      }
+    } else if (event.type === "runner") {
+      const { player, to, out, kind } = event.payload;
+      if (kind !== "placed") {
+        const pitcherLine = before.pitcher ? pitchingFor(before.pitcher, fieldingSide) : null;
+        if (out) {
+          if (pitcherLine) pitcherLine.outs += 1;
+        } else if (to === "H") {
+          battingFor(player, battingSide).r += 1;
+          if (pitcherLine) pitcherLine.r += 1;
+        }
       }
     } else if (event.type === "inning.end") {
       const side: TeamSide = event.payload.half === "top" ? "away" : "home";
@@ -505,6 +751,33 @@ export function foldBoxScore(gameId: string, events: readonly Event[]): GameBoxS
     lastSeq: events.reduce((max, event) => Math.max(max, event.seq), state.lastSeq),
   };
 
+  const sortedBatting = (side: TeamSide): PlayerBattingLine[] =>
+    [...batting[side].values()]
+      .filter((line) => line.name !== "" && (line.pa > 0 || line.r > 0))
+      .map((line) => ({ ...line, avg: average(line.h, line.ab) }))
+      .sort(
+        (a, b) =>
+          (lineupOrder[side].get(a.playerId) ?? Number.MAX_SAFE_INTEGER) -
+            (lineupOrder[side].get(b.playerId) ?? Number.MAX_SAFE_INTEGER) ||
+          a.name.localeCompare(b.name) ||
+          a.playerId.localeCompare(b.playerId),
+      );
+
+  const sortedPitching = (side: TeamSide): PlayerPitchingLine[] =>
+    [...pitching[side].values()]
+      .filter(
+        (line) =>
+          line.name !== "" &&
+          (line.pitches > 0 || line.battersFaced > 0 || line.outs > 0),
+      )
+      .sort(
+        (a, b) =>
+          (lineupOrder[side].get(a.playerId) ?? Number.MAX_SAFE_INTEGER) -
+            (lineupOrder[side].get(b.playerId) ?? Number.MAX_SAFE_INTEGER) ||
+          a.name.localeCompare(b.name) ||
+          a.playerId.localeCompare(b.playerId),
+      );
+
   return {
     gameId,
     status: state.status,
@@ -513,12 +786,16 @@ export function foldBoxScore(gameId: string, events: readonly Event[]): GameBoxS
       hits: hits.home,
       errors: errors.home,
       linescore: linescore(innings.home),
+      batting: sortedBatting("home"),
+      pitching: sortedPitching("home"),
     },
     away: {
       runs: state.score.away,
       hits: hits.away,
       errors: errors.away,
       linescore: linescore(innings.away),
+      batting: sortedBatting("away"),
+      pitching: sortedPitching("away"),
     },
   };
 }

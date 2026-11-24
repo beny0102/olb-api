@@ -11,6 +11,7 @@ import { filter, map, merge, of, type Observable } from "rxjs";
 import {
   foldBoxScore,
   foldEvents,
+  type BoxPlayerReference,
   type GameBoxScore,
   type GameState,
 } from "../domain/fold.js";
@@ -18,6 +19,7 @@ import { finishError } from "../domain/finish.js";
 import { computeStandings, type Standings } from "../domain/standings.js";
 import { isUuidV7, uuidv7 } from "../domain/uuid7.js";
 import { GameNotFoundError } from "../store/errors.js";
+import { LEAGUE_STORE, type LeagueStore } from "../store/league.store.js";
 import { EVENT_STORE, type EventStore, type GameRecord } from "../store/store.js";
 import { GameStreamService, type GameStreamMessage } from "./game-stream.service.js";
 
@@ -129,6 +131,7 @@ function finalScore(value: unknown): { home: number; away: number } {
 export class GamesService {
   constructor(
     @Inject(EVENT_STORE) private readonly store: EventStore,
+    @Inject(LEAGUE_STORE) private readonly league: LeagueStore,
     @Inject(GameStreamService) private readonly stream: GameStreamService,
   ) {}
 
@@ -215,8 +218,43 @@ export class GamesService {
 
   async getBoxScore(id: string): Promise<GameBoxScore> {
     assertGameId(id);
-    const events = await this.listEvents(id, 0);
-    return foldBoxScore(id, events);
+    const [events, players] = await Promise.all([
+      this.listEvents(id, 0),
+      this.boxPlayers(id),
+    ]);
+    return foldBoxScore(id, events, players);
+  }
+
+  /**
+   * League rosters supply public-safe labels for the per-player box score.
+   * A standalone game has no roster, so its players stay anonymous; a hidden
+   * name arrives as jersey or position from `displayName`, never as the full
+   * name.
+   */
+  private async boxPlayers(gameId: string): Promise<Map<string, BoxPlayerReference>> {
+    const game = await this.league.getGame(gameId);
+    if (!game) return new Map();
+
+    const players = new Map<string, BoxPlayerReference>();
+    const teamSeasons = new Set(
+      [game.awayTeamSeasonId, game.homeTeamSeasonId].filter(
+        (teamSeasonId): teamSeasonId is string => teamSeasonId !== null,
+      ),
+    );
+
+    for (const teamSeasonId of teamSeasons) {
+      for (const entry of await this.league.listRoster(teamSeasonId)) {
+        if (players.has(entry.playerId)) continue;
+        players.set(entry.playerId, {
+          playerId: entry.playerId,
+          name: entry.displayName,
+          jersey: entry.jersey,
+          position: entry.primaryPosition,
+        });
+      }
+    }
+
+    return players;
   }
 
   async getStandings(): Promise<Standings> {

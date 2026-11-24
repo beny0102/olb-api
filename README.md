@@ -265,7 +265,7 @@ in `/score` on the web origin and move through its Export/Import controls.
 | POST | `/games/:id/finish` | Append `game.end` with the official score |
 | GET | `/games/:id` | Game record and last sequence number |
 | GET | `/games/:id/state` | Projection folded from the whole log |
-| GET | `/games/:id/boxscore` | Runs, hits, errors and linescore derived from the log |
+| GET | `/games/:id/boxscore` | Runs, hits, errors, linescore and per-player batting/pitching lines derived from the log |
 | GET | `/games/:id/events?fromSeq=N` | Event log from a sequence number |
 | GET | `/games/:id/stream` | SSE: initial `snapshot`, then `state` after each append |
 | POST | `/games/:id/events` | Append one event |
@@ -745,10 +745,12 @@ only the authoritative writer appends the accepted play, and `GET /state` and
 
 `GET /games/:id/boxscore` derives every number from the log. Runs come from the
 plays that reach home (or the official `finalScore`), hits from play codes that
-start with `S`, `D`, `T` or `HR`, errors from E-codes and `error` fielding
-roles, and the linescore from each `inning.end.runsScored`, padded to nine
-innings with `null`. Player lines are absent because there is no player
-registry yet.
+start with `S`, `D`, `T` or `HR` and are not sacrifices, errors from E-codes and
+`error` fielding roles, and the linescore from each `inning.end.runsScored`,
+padded to nine innings with `null`. Batting and pitching lines are keyed by
+player id and labelled from the league roster. A hidden public name arrives as
+its jersey number or position; a game without a roster omits player lines
+rather than inventing identities. There is no fielding line yet.
 
 `GET /standings` folds every game and counts only `final` games plus `forfeit`
 games (a forfeit is terminal too). Teams are grouped by their exact label, and
